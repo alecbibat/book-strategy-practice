@@ -45,7 +45,12 @@ function showTab(tab: Tab, focus = false): void {
     $(t.view).hidden = !on;
     if (on && focus) b.focus();
   }
-  if (tab === "drill") clearTimeout(drill.drill.timer);
+  if (tab !== "drill") {
+    clearTimeout(drill.drill.timer); // don't deal while the drill is hidden
+    drill.drill.timer = 0;
+  } else if (drill.drill.answered && drill.drill.verdict?.ok && saved.auto) {
+    drill.next(); // a right answer was waiting to move on
+  }
 }
 $("tabDrill").parentElement!.addEventListener("click", e => {
   const b = (e.target as HTMLElement).closest<HTMLElement>('[role="tab"]');
@@ -72,6 +77,7 @@ function openDialog(d: HTMLDialogElement): void {
   if (d.open) return;
   for (const other of [cardDialog, rulesDialog]) if (other !== d && other.open) other.close();
   clearTimeout(drill.drill.timer); // don't deal behind an open sheet
+  drill.drill.timer = 0;
   d.showModal();
 }
 function openCard(selectId?: string): void {

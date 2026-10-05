@@ -331,7 +331,8 @@ export function initDrill(opts: { openAdvisor: (up: Rank, player: Rank[]) => voi
       if (cur) onOpenAdvisor(cur.up, cur.player);
       return;
     }
-    if (t.closest("#nextBtn") || (drill.answered && drill.timer)) next();
+    // A right answer with auto-advance on has no Next button: tapping the verdict moves on.
+    if (t.closest("#nextBtn") || (drill.answered && drill.verdict?.ok && saved.auto)) next();
   });
   el.modes.addEventListener("click", e => {
     const b = (e.target as HTMLElement).closest<HTMLButtonElement>("button[data-mode]");
