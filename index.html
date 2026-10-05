@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Strategy Drill</title>
+<meta name="description" content="Drill blackjack basic strategy, check the strategy card for your table's rules, and get the right play for any hand.">
+<meta name="theme-color" content="#226f49" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0c120f" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Strategy Drill">
+<link rel="icon" href="./icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="./apple-touch-icon.png">
+<link rel="manifest" href="./manifest.webmanifest">
+</head>
+<body>
+<main class="shell">
+  <header class="top">
+    <div class="brand">
+      <span class="eyebrow" id="eyebrow">Blackjack · 4–8 decks</span>
+      <h1>Strategy Drill</h1>
+    </div>
+    <div class="top-actions">
+      <button type="button" class="pill-btn" id="cardBtn" aria-haspopup="dialog" aria-controls="cardDialog" aria-keyshortcuts="C">
+        <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><rect x="2" y="2" width="12" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M2 6.5h12M2 10h12M6.5 2v12M10 2v12" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
+        <span>Strategy card</span>
+      </button>
+      <button type="button" class="pill-btn" id="rulesBtn" aria-haspopup="dialog" aria-controls="rulesDialog">
+        <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2 4h7M13 4h1M2 8h3M9 8h5M2 12h1M7 12h7" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="11" cy="4" r="1.8" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="7" cy="8" r="1.8" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="5" cy="12" r="1.8" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
+        <span class="sr">Table rules: </span><span id="rulesText">S17 · DAS · LS</span>
+      </button>
+    </div>
+  </header>
+
+  <div class="tabs" role="tablist" aria-label="What to do">
+    <button type="button" role="tab" id="tabDrill" aria-controls="viewDrill" aria-selected="true">Drill</button>
+    <button type="button" role="tab" id="tabAdvisor" aria-controls="viewAdvisor" aria-selected="false" tabindex="-1">Hand advisor</button>
+  </div>
+
+  <!-- ===================== DRILL ===================== -->
+  <section class="view" id="viewDrill" role="tabpanel" aria-labelledby="tabDrill">
+    <nav class="modes" id="modes" aria-label="Hands to drill">
+      <button type="button" data-mode="all" aria-pressed="true">All</button>
+      <button type="button" data-mode="hard" aria-pressed="false">Hard</button>
+      <button type="button" data-mode="soft" aria-pressed="false">Soft</button>
+      <button type="button" data-mode="pair" aria-pressed="false">Pairs</button>
+      <button type="button" data-mode="misses" aria-pressed="false">Misses <span class="badge" id="missBadge" hidden></span></button>
+    </nav>
+
+    <dl class="tally" aria-label="This session">
+      <div><dt>Accuracy</dt><dd><b id="tAcc">–</b><small id="tAccSub">no hands yet</small></dd></div>
+      <div><dt>Streak</dt><dd><b id="tStreak">0</b><small id="tBest">best 0</small></dd></div>
+      <div><dt>Avg time</dt><dd><b id="tSpeed">–</b><small>when right</small></dd></div>
+    </dl>
+
+    <section class="felt no-anim" id="felt" aria-label="The table">
+      <div class="seat dealer">
+        <span class="seat-label">Dealer</span>
+        <div class="hand" id="dealerHand"></div>
+      </div>
+      <svg class="arc" viewBox="0 0 320 58" aria-hidden="true" focusable="false">
+        <defs>
+          <path id="arcTop" d="M 16 12 Q 160 50 304 12"/>
+          <path id="arcLow" d="M 40 32 Q 160 64 280 32"/>
+        </defs>
+        <text class="a1"><textPath href="#arcTop" startOffset="50%" text-anchor="middle">BLACKJACK PAYS 3 TO 2</textPath></text>
+        <text class="a2"><textPath class="arc-rule" href="#arcLow" startOffset="50%" text-anchor="middle">DEALER MUST STAND ON ALL 17s</textPath></text>
+      </svg>
+      <div class="seat player">
+        <div class="hand" id="playerHand"></div>
+        <span class="pill" id="handName" aria-live="polite"></span>
+      </div>
+    </section>
+
+    <div class="decide" id="decide" role="group" aria-label="Your play">
+      <button type="button" class="act" data-act="hit" aria-keyshortcuts="H">Hit <kbd aria-hidden="true">H</kbd></button>
+      <button type="button" class="act" data-act="stand" aria-keyshortcuts="S">Stand <kbd aria-hidden="true">S</kbd></button>
+      <button type="button" class="act" data-act="double" aria-keyshortcuts="D">Double <kbd aria-hidden="true">D</kbd></button>
+      <button type="button" class="act wide" data-act="split" aria-keyshortcuts="P">Split <kbd aria-hidden="true">P</kbd></button>
+      <button type="button" class="act wide" data-act="surrender" aria-keyshortcuts="R">Surrender <kbd aria-hidden="true">R</kbd></button>
+    </div>
+
+    <div class="verdict" id="verdict" aria-live="polite"></div>
+
+    <section class="panel" aria-labelledby="missTitle">
+      <div class="panel-head"><h2 id="missTitle">Misses to review</h2><span class="meta" id="lifetime"></span></div>
+      <div class="misses" id="misses"></div>
+      <p class="split-line" id="byType" hidden></p>
+    </section>
+  </section>
+
+  <!-- ===================== ADVISOR ===================== -->
+  <section class="view" id="viewAdvisor" role="tabpanel" aria-labelledby="tabAdvisor" hidden>
+    <section class="felt advisor-felt" id="advFelt" aria-label="Cards you picked">
+      <div class="seat dealer">
+        <span class="seat-label">Dealer</span>
+        <div class="hand" id="advDealer"></div>
+      </div>
+      <div class="seen-strip" id="advSeen" hidden>
+        <span class="seat-label">Other cards out</span>
+        <div class="chips" id="advSeenCards"></div>
+      </div>
+      <div class="seat player">
+        <div class="hand" id="advPlayer"></div>
+        <span class="pill" id="advHandName">Your hand</span>
+      </div>
+    </section>
+
+    <div class="adv-controls">
+      <div class="target" id="advTarget" role="radiogroup" aria-label="Add cards to">
+        <button type="button" role="radio" data-target="dealer" aria-checked="true">Dealer upcard</button>
+        <button type="button" role="radio" data-target="player" aria-checked="false" tabindex="-1">Your hand</button>
+        <button type="button" role="radio" data-target="seen" aria-checked="false" tabindex="-1">Other cards</button>
+      </div>
+      <div class="keypad" id="keypad" role="group" aria-label="Add a card" aria-describedby="keypadHint"></div>
+      <p class="keypad-hint" id="keypadHint"></p>
+      <div class="adv-tools">
+        <button type="button" class="tool-btn" id="advUndo" aria-keyshortcuts="Backspace">Undo</button>
+        <button type="button" class="tool-btn" id="advClear">Clear</button>
+        <label class="switch"><input type="checkbox" id="advSplit"><span class="switch-ui" aria-hidden="true"></span><span>From a split</span></label>
+      </div>
+    </div>
+
+    <div class="answer" id="advAnswer" aria-live="polite"></div>
+
+    <section class="panel" id="advOdds" aria-labelledby="oddsTitle" hidden>
+      <div class="panel-head"><h2 id="oddsTitle">Exact odds</h2><span class="meta">these cards</span></div>
+      <div id="oddsBody" class="odds-body"></div>
+    </section>
+  </section>
+
+  <footer class="foot">
+    <p>Never take insurance or even money. Every hand assumes the dealer has already checked for blackjack.</p>
+    <p id="syncNote"></p>
+  </footer>
+</main>
+
+<!-- ===================== STRATEGY CARD ===================== -->
+<dialog class="sheet wide" id="cardDialog" aria-labelledby="cardTitle">
+  <div class="sheet-head">
+    <div class="sheet-titles">
+      <h2 id="cardTitle">Strategy card</h2>
+      <p class="meta" id="cardSummary"></p>
+    </div>
+    <div class="sheet-actions">
+      <button type="button" class="icon-btn" id="printBtn" aria-label="Print the strategy card">
+        <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M4.5 6V2.5h7V6M4.5 11.5h-2v-5h11v5h-2M4.5 9.5h7v4h-7z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
+      </button>
+      <button type="button" class="icon-btn" data-close aria-label="Close">
+        <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+  </div>
+  <div class="sheet-body">
+    <details class="rules-box" id="cardRulesBox">
+      <summary><span>Table rules</span><span class="meta" id="cardRulesShort"></span><svg class="chev" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></summary>
+      <div class="rules-form" id="cardRulesForm"></div>
+    </details>
+    <div class="seg" id="chartView" role="group" aria-label="Card view">
+      <button type="button" data-view="plays" aria-pressed="true">Plays</button>
+      <button type="button" data-view="results" aria-pressed="false">My results</button>
+    </div>
+    <div class="chart-wrap"><table class="strat" id="chart" aria-describedby="chartFoot"><caption class="sr">Basic strategy: your hand down the side, the dealer’s upcard across the top</caption></table></div>
+    <p class="chart-foot" id="chartFoot"></p>
+    <div class="legend" id="legend"></div>
+    <div class="detail" id="detail" aria-live="polite"></div>
+  </div>
+</dialog>
+
+<!-- ===================== RULES ===================== -->
+<dialog class="sheet" id="rulesDialog" aria-labelledby="rulesTitle">
+  <div class="sheet-head">
+    <div class="sheet-titles"><h2 id="rulesTitle">Table rules</h2><p class="meta">The drill, the advisor and the card all follow these.</p></div>
+    <div class="sheet-actions">
+      <button type="button" class="icon-btn" data-close aria-label="Close">
+        <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+  </div>
+  <div class="sheet-body">
+    <div class="rules-form" id="rulesForm"></div>
+    <p class="fine">Assumes the dealer checks for blackjack, blackjack pays 3 to 2, you can split up to four hands, and split aces get one card each.</p>
+    <button type="button" class="wide-btn" id="rulesToCard">View the strategy card</button>
+    <h3 class="sub-head">Drill</h3>
+    <div class="set-row">
+      <div><div class="set-name" id="autoName">After a right answer</div></div>
+      <div class="seg" role="group" aria-labelledby="autoName" id="autoSeg"><button type="button" data-v="1">Deal next</button><button type="button" data-v="0">Wait for me</button></div>
+    </div>
+    <h3 class="sub-head">Appearance</h3>
+    <div class="set-row">
+      <div><div class="set-name" id="themeName">Theme</div></div>
+      <div class="seg" role="group" aria-labelledby="themeName" id="themeSeg"><button type="button" data-v="system">Auto</button><button type="button" data-v="light">Light</button><button type="button" data-v="dark">Dark</button></div>
+    </div>
+    <h3 class="sub-head">Progress</h3>
+    <div class="set-row">
+      <div><div class="set-name">Drill history</div><div class="set-sub" id="progressSub"></div></div>
+      <button type="button" class="linkish" id="resetBtn">Reset progress</button>
+    </div>
+  </div>
+</dialog>
+
+<script type="module" src="/src/main.ts"></script>
+</body>
+</html>

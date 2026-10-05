@@ -64,3 +64,10 @@ export function strategyCode(cat: Category, row: number, up: Upcard, rules: Rule
   if (!rules.surrender && raw[0] === "R") raw = raw === "Rh" ? "H" : raw === "Rs" ? "S" : "P";
   return raw as Code;
 }
+
+export function chartSummary(rules: Rules): string {
+  const decks = rules.decks === "1" ? "1 deck" : rules.decks === "2" ? "2 decks" : "4–8 decks";
+  const dbl = rules.double === "any" ? "Double any two cards" : rules.double === "9-11" ? "Double on 9–11" : "Double on 10–11";
+  return [decks, rules.h17 ? "Dealer hits soft 17" : "Dealer stands on soft 17", rules.das ? "Double after split" : "No double after split",
+    rules.surrender ? "Late surrender" : "No surrender", dbl].join(" · ");
+}

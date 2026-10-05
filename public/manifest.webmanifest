@@ -1,0 +1,17 @@
+{
+  "name": "Blackjack Strategy Drill",
+  "short_name": "Strategy Drill",
+  "description": "Drill blackjack basic strategy, check the strategy card for your table's rules, and get the right play for any hand.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#ecf0ed",
+  "theme_color": "#226f49",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
