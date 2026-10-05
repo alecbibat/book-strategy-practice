@@ -166,7 +166,7 @@ function keypadHint(a: AdvisorState, anyKey: boolean): string {
     if (a.target === "seen") return a.seen.length >= MAX_SEEN ? "That’s the limit of " + MAX_SEEN + " cards seen." : "Every card is accounted for.";
   }
   if (a.target === "dealer") return "Tap the dealer’s upcard.";
-  if (a.target === "player") return "Tap each of your cards in order.";
+  if (a.target === "player") return a.hands > 1 && a.player.length === 0 ? "Start with the card you split, then the card you drew." : "Tap each of your cards in order.";
   return "Cards you’ve seen leave the shoe. They only change the exact odds.";
 }
 
@@ -224,6 +224,9 @@ function answerHTML(adv: Advice): string {
         (a.up === 1 ? ". Turn down even money: it’s insurance under another name." : ".") + "</p>";
     case "bust":
       return '<div class="ans-head"><span class="ans-title">Bust</span></div><p class="ans-sub">That’s ' + adv.value.total + ". Undo the last card to go back.</p>";
+    case "split-aces":
+      return '<div class="ans-head"><span class="tag ans-tag t-stand">Stand</span><span class="ans-hand">' + esc(describeHand(a.player, true)) + '</span></div>' +
+        '<p class="ans-sub">Split aces get one card each and the hand stands. (If you split something else and drew an ace, enter the split card first.)</p>';
     case "twenty-one":
       return '<div class="ans-head"><span class="tag ans-tag t-stand">Stand</span><span class="ans-hand">21</span></div><p class="ans-sub">Twenty-one. Nothing left to do.</p>';
     case "play": {
@@ -238,9 +241,6 @@ function answerHTML(adv: Advice): string {
       if (fallback) h += '<p class="ans-fallback">' + esc(fallback) + "</p>";
       if (adv.notes.length) h += '<ul class="notes">' + adv.notes.map(n => "<li>" + esc(n) + "</li>").join("") + "</ul>";
       h += '<p class="ans-sub">' + esc(summary) + (tip ? " " + esc(tip) : "") + "</p>";
-      if (afterSplit() && a.player.includes(1) && a.player.length === 2 && !adv.value.pair) {
-        h += '<p class="ans-fine">If these are split aces, most casinos deal one card to each and you can’t act.</p>';
-      }
       if (adv.chartCellId) h += '<div class="ans-foot"><button type="button" class="text-btn" data-show-cell="' + adv.chartCellId + '">See it on the strategy card</button></div>';
       return h;
     }

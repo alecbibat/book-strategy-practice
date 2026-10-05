@@ -41,9 +41,16 @@ describe("advise", () => {
     expect(capped.kind === "play" && capped.action).toBe("hit");
     expect(capped.kind === "play" && capped.notes.join(" ")).toMatch(/4-hand limit/);
 
-    const aces = advise([1, 1], 6, R(), { afterSplit: true });
-    expect(aces.kind === "play" && aces.cellId).toBe("soft:1:6");
-    expect(aces.kind === "play" && aces.notes.join(" ")).toMatch(/can’t be resplit/);
+  });
+
+  it("stands on split aces and plays other split hands", () => {
+    expect(advise([1, 1], 6, R(), { afterSplit: true }).kind).toBe("split-aces");
+    expect(advise([1, 7], 6, R(), { afterSplit: true }).kind).toBe("split-aces");
+    // Split 7s and drew an ace: a normal soft 18, doubled when DAS allows it.
+    const sevenAce = advise([7, 1], 6, R(), { afterSplit: true });
+    expect(sevenAce.kind === "play" && sevenAce.action).toBe("double");
+    const noDas = advise([7, 1], 6, R({ das: false }), { afterSplit: true });
+    expect(noDas.kind === "play" && noDas.action).toBe("stand");
   });
 
   it("only doubles and surrenders on the first two cards", () => {

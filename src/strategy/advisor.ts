@@ -26,7 +26,7 @@ export function handValue(cards: Rank[]): HandValue {
 }
 
 export interface AdvisorContext {
-  /** The hand came from splitting a pair. */
+  /** The hand came from splitting a pair. Its first card is the card that was split. */
   afterSplit?: boolean;
   /** Hands in play from splitting (counts this one). Defaults to 2 after a split, else 1. */
   hands?: number;
@@ -38,6 +38,8 @@ export type Advice =
   | { kind: "blackjack" }
   | { kind: "bust"; value: HandValue }
   | { kind: "twenty-one"; value: HandValue }
+  /** A hand started by splitting aces: it gets one card and stands. */
+  | { kind: "split-aces"; value: HandValue }
   | {
       kind: "play";
       action: Action;
@@ -72,6 +74,7 @@ export function advise(player: Rank[], up: Rank | null, rules: Rules, ctx: Advis
   if (value.n === 2 && value.total === 21 && !afterSplit) return { kind: "blackjack" };
   if (value.total > 21) return { kind: "bust", value };
   if (value.total === 21) return { kind: "twenty-one", value };
+  if (afterSplit && player[0] === 1) return { kind: "split-aces", value };
 
   const canSplitHere = value.pair && (!afterSplit || (player[0] !== 1 && hands < MAX_SPLIT_HANDS));
   const avail: Availability = {
@@ -93,9 +96,7 @@ export function advise(player: Rank[], up: Rank | null, rules: Rules, ctx: Advis
     const chain = codeChain(code);
     if (chain[0] !== action) notes.push(fallbackReason(chain, action, value, rules, afterSplit));
     if (value.pair && !canSplitHere && cat !== "pair") {
-      notes.unshift(player[0] === 1 && afterSplit
-        ? "Aces can’t be resplit, so this plays as a soft 12."
-        : "You’re at the " + MAX_SPLIT_HANDS + "-hand limit, so this plays as a total.");
+      notes.unshift("You’re at the " + MAX_SPLIT_HANDS + "-hand limit, so this plays as a total.");
     }
     const cellId = cat + ":" + row + ":" + upcard;
     const onChart = !!CELL_BY_ID[cellId];
