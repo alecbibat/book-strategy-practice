@@ -4,7 +4,9 @@ import { describe, expect, it } from "vitest";
 import derived from "../strategy/derived.json";
 import type { Category, Code, Rules, Upcard } from "../strategy/types";
 import { CODES, UPCARDS } from "../strategy/types";
-import { allRuleCombos, comboKey, decideCode, deriveDecksH17, ROWS } from "./derive";
+import { canDouble } from "../strategy/resolve";
+import { allRuleCombos, comboKey, decideCode, deriveDecksH17, legalRanking, ROWS, rowHands } from "./derive";
+import { handShape } from "./shoe";
 import { referenceCode } from "./reference-chart";
 
 type Combo = Record<Category, Record<string, string>>;
@@ -70,8 +72,9 @@ describe("derived.json", () => {
     }
   });
 
-  it("lists close cells with margins below 0.005", () => {
+  it("lists close cells with margins below 0.005, comparing legal plays only", () => {
     expect(derived.close.length).toBeGreaterThan(0);
+    const rulesOf = new Map(allRuleCombos().map((r) => [comboKey(r), r]));
     for (const e of derived.close) {
       expect(combos[e.key]).toBeDefined();
       expect(e.margin).toBeGreaterThanOrEqual(0);
@@ -80,11 +83,26 @@ describe("derived.json", () => {
       const [cat, row, up] = e.cell.split(":");
       const codes = combos[e.key][cat as Category][row].split(" ");
       expect(codes[UPCARDS.indexOf(Number(up) as Upcard)]).toBe(e.code);
+      // A first-two-card double the rule set forbids is never one of the two compared plays.
+      const rules = rulesOf.get(e.key)!;
+      const shape = handShape(rowHands(cat as Category, Number(row))[0]);
+      if (!canDouble(shape.hard, shape.soft, 2, rules)) expect([e.best, e.second], `${e.key} ${e.cell}`).not.toContain("double");
+      if (!rules.surrender) expect([e.best, e.second]).not.toContain("surrender");
     }
   });
 
+  it("legalRanking drops a double the rules forbid and keeps everything else", () => {
+    const ev = { stand: -0.11, hit: 0.175, double: 0.193, split: 0.191, surrender: -0.5 };
+    const r1011: Rules = { decks: "1", h17: false, das: true, surrender: true, double: "10-11" };
+    expect(legalRanking(ev, "pair", 4, r1011).map(([a]) => a)).toEqual(["split", "hit", "stand", "surrender"]);
+    expect(legalRanking(ev, "pair", 4, { ...r1011, double: "any" }).map(([a]) => a)).toEqual(["double", "split", "hit", "stand", "surrender"]);
+    expect(legalRanking({ ...ev, split: null, surrender: null }, "soft", 7, { ...r1011, double: "9-11" }).map(([a]) => a)).toEqual(["hit", "stand"]);
+  });
+
   it("a pair that can't be doubled under the restriction falls back to the split when the split beats hit/stand", () => {
-    // 1 deck S17 DAS, 4,4 v 6: double (as if allowed) +0.193 > split +0.191 > hit +0.175.
+    // 1 deck S17 DAS 10-11, 4,4 v 6 under the earlier split model: double (as if allowed) +0.193 >
+    // split +0.191 > hit +0.175, which came out Dh (= hit). The current model has split +0.194
+    // (Nairn's exact value) above the double, but the fallback must hold whenever the order is this.
     const ev = { stand: -0.114, hit: 0.175, double: 0.193, split: 0.191, surrender: null };
     const rules: Rules = { decks: "1", h17: false, das: true, surrender: false, double: "10-11" };
     expect(decideCode(ev, "pair", 4, rules).code).toBe("P"); // 4,4 = hard 8 can't be doubled under 10-11

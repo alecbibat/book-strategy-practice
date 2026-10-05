@@ -12,14 +12,14 @@
 //    src/strategy/derived.json. It is TOTAL-DEPENDENT basic strategy: each hard total weights its
 //    two-card compositions by how likely they are to be dealt, given the upcard and no dealer blackjack.
 //    "4-8" decks is modelled as 6 decks. Deriving at 4, 5 and 8 decks changes nothing, except 4,4 v 5
-//    (S17, DAS, double 10-11) at 8 decks, which hits by 0.0008. There the 6-deck split is kept;
-//    blackjackinfo's 8-deck chart also splits.
+//    (S17, DAS, double 10-11) at 8 decks, which hits by 0.0006. There the 6-deck split (by 0.0027) is
+//    kept; blackjackinfo's 8-deck chart also splits.
 //  * Cross-checked cell by cell against 72 published charts: Wizard of Odds (1, 2 and 4+ decks; all 24
 //    double-any rule sets) and the blackjackinfo.com strategy engine (48 charts at 2, 6 and 8 decks;
 //    double-any, plus 9-11 and 10-11 with DAS). Also checked against the original Strategy Drill card
 //    (4-8 decks), Hoppe's computed 1- and 6-deck tables, Nairn's 1-deck EV tables and Wikipedia. Every
 //    cell agrees except one. 2 decks H17 DAS LS 8,8 v A: Wizard of Odds says Rp, blackjackinfo P.
-//    The sources disagree, so this file follows the engine: P, by 0.0042.
+//    The sources disagree, so this file follows the engine: P, by 0.0061.
 //  * close-calls.ts lists every disputed or thin (margin < 0.003) cell. It also lists every deliberate
 //    deviation from the engine, and there are none. tables.test.ts checks this file against
 //    derived.json, the original card and the rules of the game.
@@ -109,7 +109,7 @@ const CHARTS: Record<DeckGroup, DeckChart> = {
       "hard:17:11": "Rs",
       "soft:7:11": "H",
       "pair:7:11": "Rh",
-      "pair:9:11": "P" // split by only 0.0002; Wizard of Odds, Hoppe and Nairn agree
+      "pair:9:11": "P" // split by 0.0022 (Nairn's exact splits give the same); Wizard of Odds and Hoppe agree
     },
     noDas: {
       "pair:2:2": "H",
@@ -171,7 +171,7 @@ const CHARTS: Record<DeckGroup, DeckChart> = {
       "soft:3:4": "Dh",
       "soft:7:2": "Ds",
       "soft:8:6": "Ds"
-      // pair:8:11 stays P with DAS (split beats surrender by 0.0042): blackjackinfo agrees, Wizard of Odds says Rp.
+      // pair:8:11 stays P with DAS (split beats surrender by 0.0061): blackjackinfo agrees, Wizard of Odds says Rp.
     },
     noDas: {
       "pair:2:2": "H",
@@ -249,8 +249,9 @@ const CHARTS: Record<DeckGroup, DeckChart> = {
 
 /** Split changes caused by a doubling restriction (it also limits doubling after a split). */
 const RESTRICTED: Array<{ decks: DeckGroup; h17: boolean; das: boolean; double: Exclude<DoubleRule, "any">; cells: Overrides }> = [
-  // 1 deck, S17, DAS on 10-11 only: splitting 4s loses its 4+5 = 9 doubles, so 4,4 v 4 hits
-  // (by 0.0013; Nairn's 1-deck EVs give hit by 0.0005). Every other split is unchanged in every rule set.
+  // 1 deck, S17, DAS on 10-11 only: splitting 4s loses its 4+5 = 9 doubles, so 4,4 v 4 hits, by
+  // 0.0005 (hit +0.09786, split +0.09739, the same as Nairn's exact 1-deck values). Every other split
+  // is unchanged in every rule set.
   { decks: "1", h17: false, das: true, double: "10-11", cells: { "pair:4:4": "H" } }
 ];
 

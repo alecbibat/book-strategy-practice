@@ -13,8 +13,9 @@
 // Exact parts: the shoe composition (all known cards removed), the dealer's play (drawn without
 // replacement from the composition at the moment the player stands, H17/S17, no-blackjack
 // conditioning), hitting (composition-dependent recursion with card removal), doubling, and the peek
-// conditioning of the player's own draws. Approximations: the split model (split.ts) and the
-// "stand on 21" shortcut (hand.ts).
+// conditioning of the player's own draws. Approximations: the split model (split.ts; exact without
+// resplits, about 1e-5 from exact with them, worst 3e-4 in a single deck) and the "stand on 21"
+// shortcut (hand.ts).
 
 import type { Action, Rank, Rules } from "../strategy/types";
 import { engineDecks } from "../strategy/types";
@@ -26,7 +27,10 @@ import { assertRank, freshShoe, handShape, withoutCards } from "./shoe";
 export { freshShoe, shoeTotal, withoutCards, type Counts } from "./shoe";
 export { dealerDistribution, dealerBlackjackProb, dealerGraph, dealerMass, standValue } from "./dealer";
 export { HandContext, type HandNumerators } from "./hand";
-export { splitHandTable, splitEVFromTable, expectedHandCounts, MAX_HANDS, type SplitHandTable } from "./split";
+export {
+  splitHandTable, splitEVFromTable, splitValues, configValue, splitConfigs, expectedHandCounts, MAX_HANDS, DEFAULT_SPLIT_LEVELS,
+  type SplitHandTable, type SplitLevel, type SplitConfig, type SplitValues, type SplitTableOptions
+} from "./split";
 
 export interface EVQuery {
   /** The hand's cards (>= 2), 1 = ace, 10 = any ten-value card. For a split hand, player[0] is the split card. */
@@ -34,11 +38,22 @@ export interface EVQuery {
   /** Dealer upcard (1 = ace). */
   up: Rank;
   rules: Rules;
-  /** Other cards known to be out of the shoe (other players' cards, other split hands, ...). */
+  /**
+   * Other cards known to be out of the shoe (other players' cards, the other split hands' drawn
+   * cards, ...). After a split, do NOT list the split card that each other hand started with: the
+   * engine removes those itself (hands - 1 copies of player[0]).
+   */
   seen?: Rank[];
-  /** This hand came from a split (double only with DAS + restriction; no surrender). */
+  /**
+   * This hand came from a split (double only with DAS + restriction; no surrender). player[0] is the
+   * split card; a split-ace hand (player[0] = 1) must stand.
+   */
   afterSplit?: boolean;
-  /** Hands currently in play from splitting (default 1, or 2 when afterSplit). Resplit while < 4, never aces. */
+  /**
+   * Hands currently in play from splitting, counting this one (default 1, or 2 when afterSplit).
+   * Resplit while < 4, never aces. After a split, each of the other hands - 1 hands holds one split
+   * card, which the engine takes out of the shoe.
+   */
   hands?: number;
 }
 
@@ -109,9 +124,12 @@ function bestOf(r: Omit<EVResult, "best">): Action {
  * Naturals: a two-card 21 not after a split returns stand = 1.5 and best = 'stand'; `hit` is the
  * value of (pointlessly) hitting the soft 21, and double / split / surrender are null.
  *
- * Split aces: the engine doesn't know whether an afterSplit hand came from split aces. A split-ace
- * hand gets one card and must stand; callers should not offer it any other action. An afterSplit
- * [A, A] can't be resplit (split = null).
+ * Split aces: an afterSplit hand whose split card (player[0]) is an ace got one card and must stand.
+ * best = 'stand' and double / split / surrender are null; `hit` is reported for information only (it
+ * isn't allowed). Such a hand can't have more than 2 cards (that throws).
+ *
+ * After a split, the split card of each of the other hands - 1 hands is taken out of the shoe (on
+ * top of `seen`), so `seen` must not repeat those cards.
  *
  * Throws an Error when the cards are impossible for the shoe (e.g. five aces from one deck), when
  * the hand has fewer than 2 cards, or when it is already bust.
@@ -129,18 +147,23 @@ export function handEVs(q: EVQuery): EVResult {
 
   const decks = engineDecks(rules.decks);
   const shoe = freshShoe(decks);
-  const label = `a ${decks}-deck shoe`;
-  // Validate everything together so the message counts player + upcard + seen cards.
-  withoutCards(shoe, [...player, up, ...seen], label);
-  const base = withoutCards(shoe, [up, ...seen], label);
+  const n = player.length;
+  const splitAce = afterSplit && player[0] === 1;
+  if (splitAce && n > 2) throw new Error("handEVs: split aces get one card each, so a split-ace hand has exactly 2 cards");
+  // After a split, every other hand in play started with the split card.
+  const siblings: Rank[] = afterSplit ? new Array<Rank>(Math.max(0, hands - 1)).fill(player[0]) : [];
+  const label = `a ${decks}-deck shoe` + (siblings.length ? ` (counting the split card in each of the other ${siblings.length} hand${siblings.length > 1 ? "s" : ""})` : "");
+  const known = [up, ...seen, ...siblings];
+  // Validate everything together so the message counts player + upcard + seen + sibling cards.
+  withoutCards(shoe, [...player, ...known], label);
+  const base = withoutCards(shoe, known, label);
 
   const shape = handShape(player);
   if (shape.hard > 21) throw new Error("handEVs: the hand is already bust");
-  const n = player.length;
   const ctx = contextFor(base, up, rules.h17);
 
   const natural = n === 2 && !afterSplit && shape.total === 21;
-  const allowDouble = !natural && canDouble(shape.hard, shape.soft, n, rules, afterSplit);
+  const allowDouble = !natural && !splitAce && canDouble(shape.hard, shape.soft, n, rules, afterSplit);
   const nums = ctx.evaluate(player, allowDouble ? ["stand", "hit", "double"] : ["stand", "hit"]);
 
   const stand = natural ? 1.5 : nums.stand / nums.noBJ;
@@ -150,13 +173,15 @@ export function handEVs(q: EVQuery): EVResult {
 
   let split: number | null = null;
   const pair = n === 2 && player[0] === player[1];
-  if (pair && !natural && hands < MAX_HANDS && !(afterSplit && player[0] === 1)) {
+  if (pair && !natural && hands < MAX_HANDS && !splitAce) {
     const x = player[0];
-    // Split context: the hand holds one pair card, the other one is out of the shoe.
+    // Split context: the hand holds one pair card, the other one is out of the shoe. Deeper levels
+    // (more pair cards out, for resplits) come from the same context cache.
     const splitCtx = contextFor(withoutCards(base, [x], label), up, rules.h17);
-    split = splitEVFromTable(splitHandTable(splitCtx, x), rules, hands + 1);
+    const table = splitHandTable(splitCtx, x, { context: (b) => contextFor(b, up, rules.h17) });
+    split = splitEVFromTable(table, rules, hands + 1);
   }
 
   const res = { stand, hit, double, split, surrender };
-  return { ...res, best: natural ? "stand" : bestOf(res) };
+  return { ...res, best: natural || splitAce ? "stand" : bestOf(res) };
 }

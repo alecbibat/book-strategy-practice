@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import type { Action, Category, Code, Upcard } from "../src/strategy/types";
 import { DECK_GROUPS } from "../src/strategy/types";
 import { codeChain } from "../src/strategy/resolve";
-import { deriveDecksH17, type CellReport, type DerivedCombo } from "../src/engine/derive";
+import { deriveDecksH17, legalRanking, type CellReport, type DerivedCombo } from "../src/engine/derive";
 import { referenceCode } from "../src/engine/reference-chart";
 
 const CLOSE = 0.005;
@@ -28,7 +28,8 @@ for (const decks of DECK_GROUPS) {
     Object.assign(
       combos,
       deriveDecksH17(decks, h17, (r) => {
-        const [[best, bv], [second, sv]] = r.decision.ranking;
+        // Legal margins: a first-two-card double the rules forbid is not a candidate.
+        const [[best, bv], [second, sv]] = legalRanking(r.ev, r.cat, r.row, r.rules);
         if (bv - sv < CLOSE) close.push({ key: r.key, cell: r.cell, code: r.decision.code, best, second, margin: r5(bv - sv) });
         if (r.decision.anomaly) anomalies.push(`${r.key} ${r.cell} ${r.decision.code}: ${r.decision.anomaly}`);
         if (decks === "4-8" && r.rules.double === "any") reports.push(r);
@@ -46,10 +47,10 @@ const out = {
       "Decks: '1' = 1, '2' = 2, '4-8' modelled as 6 decks. Cards drawn without replacement from the exact composition.",
       "Dealer peeks: all EVs are conditional on no dealer blackjack (exact, including the effect on the player's draws). Blackjack pays 3:2.",
       "Hitting: exact composition-dependent recursion; doubling: one card then stand.",
-      "Splitting: up to 4 hands, split aces one card each and no resplit, split ace + ten = 21. Split hands evaluated independently with both pair cards removed; resplit modelled by the expected number of non-pair / stuck hands.",
+      "Splitting: up to 4 hands, split aces one card each and no resplit, split ace + ten = 21. Exact distribution of resplit configurations; every hand valued with all pair cards in play and the other hands' second cards out of the shoe (exchangeability; matches Nairn's exact single-deck splits to ~1e-5). Resplit always or never, whichever is better.",
       "Doubling the first two cards is evaluated as if allowed even under a 9-11 / 10-11 restriction (Dh/Ds then fall back to the second letter); doubling after a split obeys the restriction.",
       "Surrender: late, first two cards only, never after a split. Rx = surrender, else x.",
-      "close: cells whose two best actions are within 0.005 of a unit (margin in units of the initial bet)."
+      "close: cells whose two best LEGAL actions for a fresh two-card hand are within 0.005 of a unit (margin in units of the initial bet). A first-two-card double the rule set forbids is not counted, so this matches the margins in src/strategy/close-calls.ts."
     ]
   },
   combos,

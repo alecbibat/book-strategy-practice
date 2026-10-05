@@ -3,7 +3,9 @@
 // dealer has blackjack (the peek), and compare the average results with the engine.
 import { describe, expect, it } from "vitest";
 import type { Rank, Rules } from "../strategy/types";
-import { handEVs } from "./index";
+import { engineDecks } from "../strategy/types";
+import { canDouble } from "../strategy/resolve";
+import { contextFor, freshShoe, handEVs, splitHandTable, splitValues, withoutCards } from "./index";
 
 /** mulberry32: small, fast, well-distributed 32-bit PRNG. */
 function rng(seed: number): () => number {
@@ -128,16 +130,87 @@ describe("Monte Carlo (shuffled finite shoe) vs engine", () => {
     }
   });
 
-  it("split aces: the independent-hands approximation is within a few thousandths of a real deal", () => {
-    // The engine treats the two ace hands as drawing independently (each from the shoe with only
-    // both aces removed); the simulation deals them for real. Allow statistical noise + 0.004.
+  it("split aces: the engine's value matches a real deal (it is exact: one card each, no resplit)", () => {
+    // The engine values each ace hand with both aces out and the other hand's card unseen. The
+    // probability of a deal doesn't depend on the order the hands draw in, so that is exact; the
+    // simulation deals both hands for real. Allow statistical noise only.
     for (const decks of [1, 6]) {
       for (const up of [6, 10] as Rank[]) {
         const mc = simulate(decks, [1, 1], up, false, 1_000_000, 500 + decks * 11 + up);
         const ev = handEVs({ player: [1, 1], up, rules: rulesFor(decks, false) });
         const diff = Math.abs(mean(mc.splitAces) - (ev.split as number));
-        expect(diff, `${decks}D A,A vs ${up}: mc ${mean(mc.splitAces)} engine ${ev.split}`).toBeLessThan(Z * se(mc.splitAces) + 0.004);
+        expect(diff, `${decks}D A,A vs ${up}: mc ${mean(mc.splitAces)} engine ${ev.split}`).toBeLessThan(Z * se(mc.splitAces));
       }
     }
+  });
+
+  it("resplits with DAS: a real deal (resplitting to 4 hands) matches the split model", () => {
+    // Deals the split for real: each hand gets its second card in turn, a pair card is resplit while
+    // fewer than 4 hands are in play, and the dealer plays after every hand. Each hand is played with
+    // the engine's own decisions (the second-card decision from the split table, then hit/stand from
+    // the split context). The engine's value assumes slightly better play (it adapts to the extra pair
+    // cards out), a difference of order 1e-4, well inside the tolerance.
+    const cases: Array<[Rank, Rank, Rules]> = [
+      [8, 6, { decks: "1", h17: false, das: true, surrender: false, double: "any" }], // resplits add 0.045 here
+      [2, 4, { decks: "1", h17: true, das: true, surrender: false, double: "any" }],
+      [6, 5, { decks: "4-8", h17: false, das: true, surrender: false, double: "10-11" }]
+    ];
+    cases.forEach(([x, up, rules], i) => {
+      const base = withoutCards(freshShoe(engineDecks(rules.decks)), [up], "shoe");
+      const sctx = contextFor(withoutCards(base, [x], "shoe"), up, rules.h17);
+      const t = splitHandTable(sctx, x);
+      const lv = t.levels[0];
+      const choice = lv.stand.map((s, k) => {
+        const d = canDouble(t.hard[k], t.soft[k], 2, rules, true) ? lv.double[k] : -Infinity;
+        return d > Math.max(s, lv.hit[k]) ? "double" : lv.hit[k] > s ? "hit" : "stand";
+      });
+      const v = splitValues(t, rules, 2);
+      expect(v.resplit!).toBeGreaterThan(v.noResplit); // the policy dealt below resplits
+      const hitMemo = new Map<string, boolean>();
+      const wantsHit = (cards: number[]) => {
+        const key = cards.slice().sort((a, b) => a - b).join(",");
+        let h = hitMemo.get(key);
+        if (h === undefined) {
+          const e = totalOf(cards) >= 21 ? null : sctx.evaluate(cards, ["stand", "hit"]);
+          h = e !== null && e.hit > e.stand;
+          hitMemo.set(key, h);
+        }
+        return h;
+      };
+      const deck: number[] = [];
+      for (let r = 1; r <= 10; r++) for (let k = 0; k < base[r - 1] - (r === x ? 2 : 0); k++) deck.push(r);
+      const rand = rng(9100 + i);
+      const m = deck.length;
+      let pos = 0;
+      const draw = () => {
+        const j = pos + Math.floor(rand() * (m - pos));
+        const tmp = deck[pos]; deck[pos] = deck[j]; deck[j] = tmp;
+        return deck[pos++];
+      };
+      const st = stat();
+      for (let round = 0; round < 400_000; round++) {
+        pos = 0;
+        const hole = draw();
+        if ((up === 1 && hole === 10) || (up === 10 && hole === 1)) continue;
+        let waiting = 2, hands = 2;
+        const finals: Array<[number, number]> = [];
+        while (waiting > 0) {
+          const c = draw();
+          if (c === x && hands < 4) { hands++; waiting++; continue; } // resplit: one more hand waits for a card
+          waiting--;
+          const cards = [x, c];
+          const ch = choice[c - 1];
+          if (ch === "double") cards.push(draw());
+          else if (ch === "hit") { cards.push(draw()); while (cards.reduce((a, b) => a + b, 0) <= 21 && wantsHit(cards)) cards.push(draw()); }
+          finals.push([totalOf(cards), ch === "double" ? 2 : 1]);
+        }
+        let k = 0;
+        const extra: number[] = [];
+        const d = dealerFinal(up, hole, () => { while (extra.length <= k) extra.push(draw()); return extra[k++]; }, rules.h17);
+        add(st, finals.reduce((acc, [p, bet]) => acc + bet * result(p, d), 0));
+      }
+      const diff = Math.abs(mean(st) - v.best);
+      expect(diff, `${rules.decks}D ${x},${x} v ${up}: mc ${mean(st)} engine ${v.best}`).toBeLessThan(Z * se(st) + 0.001);
+    });
   });
 });

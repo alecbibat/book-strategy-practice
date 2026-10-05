@@ -28,9 +28,12 @@ const afterSplit = () => A().hands > 1;
 /** How many cards of each value the shoe holds for the current rules. */
 const perRank = (r: Rank) => engineDecks(saved.rules.decks) * (r === 10 ? 16 : 4);
 
+/** Copies of the split card sitting in the other split hands (the engine takes them out of the shoe too). */
+const otherSplitCards = (r: Rank) => (A().hands > 1 && A().player[0] === r ? A().hands - 1 : 0);
+
 function used(r: Rank): number {
   const a = A();
-  return (a.up === r ? 1 : 0) + a.player.filter(x => x === r).length + a.seen.filter(x => x === r).length;
+  return (a.up === r ? 1 : 0) + a.player.filter(x => x === r).length + a.seen.filter(x => x === r).length + otherSplitCards(r);
 }
 
 const name = (r: Rank) => (r === 1 ? "ace" : r === 10 ? "ten" : String(r));
@@ -43,7 +46,9 @@ function overLimit(): Rank | null {
 function canAdd(target: Target, r: Rank): boolean {
   const a = A();
   const free = perRank(r) - used(r) + (target === "dealer" && a.up === r ? 1 : 0);
-  if (free <= 0) return false;
+  // The first card of a split hand is also in each of the other split hands.
+  const need = target === "player" && a.player.length === 0 && a.hands > 1 ? a.hands : 1;
+  if (free < need) return false;
   if (target === "player") return a.player.length < MAX_PLAYER && (a.player.length < 2 || handValue(a.player).total < 21);
   if (target === "seen") return a.seen.length < MAX_SEEN;
   return true;
@@ -262,7 +267,9 @@ function renderAnswer(): void {
   const over = overLimit();
   if (over) {
     setAnswer("answer warn", '<div class="ans-head"><span class="ans-title">Too many ' + name(over) + "s</span></div>" +
-      '<p class="ans-sub">A ' + deckLabel(saved.rules).toLowerCase() + " game only has " + perRank(over) + ". Remove some or change the deck count.</p>");
+      '<p class="ans-sub">A ' + deckLabel(saved.rules).toLowerCase() + " game only has " + perRank(over) +
+      (otherSplitCards(over) ? ", counting the " + otherSplitCards(over) + " in your other split hand" + (otherSplitCards(over) > 1 ? "s" : "") : "") +
+      ". Remove some, or change the deck count or the number of split hands.</p>");
     hideOdds();
     return;
   }

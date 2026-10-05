@@ -1,7 +1,7 @@
 // Famous composition facts, API behaviour and performance.
 import { describe, expect, it } from "vitest";
 import type { Rank, Rules } from "../strategy/types";
-import { clearEngineCache, handEVs } from "./index";
+import { clearEngineCache, freshShoe, handEVs, HandContext, splitHandTable, splitValues, withoutCards } from "./index";
 import { computeUpcard, cellEVs } from "./derive";
 
 const R = (decks: Rules["decks"], h17 = false, das = true, surrender = false, double: Rules["double"] = "any"): Rules =>
@@ -116,10 +116,54 @@ describe("handEVs API", () => {
     }
   });
 
-  it("resplitting is worth something: split EV with more hands allowed is at least as good", () => {
-    const first = handEVs({ player: [8, 8], up: 6, rules: R("1") }).split as number;
-    const last = handEVs({ player: [8, 8], up: 6, rules: R("1"), afterSplit: true, hands: 3 }).split as number;
-    expect(first).toBeGreaterThanOrEqual(last);
+  it("resplitting is worth something: 1 deck 8,8 v 6 gains about 0.045 from resplits", () => {
+    const rules = R("1");
+    const t = splitHandTable(new HandContext(withoutCards(freshShoe(1), [6, 8], "shoe"), 6, false), 8);
+    const v = splitValues(t, rules, 2);
+    expect(v.resplit! - v.noResplit).toBeGreaterThan(0.04);
+    expect(v.resplit! - v.noResplit).toBeLessThan(0.05);
+    expect(handEVs({ player: [8, 8], up: 6, rules }).split).toBe(v.resplit);
+  });
+
+  it("`hands` sets how many hands a resplit may still open, with the other hands' split cards out", () => {
+    // 2 decks so that pair cards are left for every resplit. handsAfter = hands + 1.
+    const rules = R("2");
+    const tableWith = (siblings: number) =>
+      splitHandTable(new HandContext(withoutCards(freshShoe(2), [6, ...new Array<Rank>(siblings + 1).fill(8)], "shoe"), 6, false), 8);
+    const first = handEVs({ player: [8, 8], up: 6, rules }).split!;
+    expect(first).toBe(splitValues(tableWith(0), rules, 2).best);
+    const at2 = handEVs({ player: [8, 8], up: 6, rules, afterSplit: true, hands: 2 }).split!;
+    expect(at2).toBe(splitValues(tableWith(1), rules, 3).best);
+    // At 3 hands the resplit makes the 4th hand and nothing more can be resplit.
+    const at3 = handEVs({ player: [8, 8], up: 6, rules, afterSplit: true, hands: 3 }).split!;
+    const t3 = tableWith(2);
+    expect(at3).toBe(splitValues(t3, rules, 4).noResplit);
+    expect(splitValues(t3, rules, 3).best - at3).toBeGreaterThan(0.03); // what an off-by-one would give
+    expect(handEVs({ player: [8, 8], up: 6, rules, afterSplit: true, hands: 4 }).split).toBeNull();
+  });
+
+  it("after a split, the other hands' split cards are out of the shoe", () => {
+    const rules = R("1");
+    // Splitting 2s: this hand is 2,9 and the other hand holds a 2.
+    const split = handEVs({ player: [2, 9], up: 5, rules, afterSplit: true, hands: 2 });
+    const asSeen = handEVs({ player: [2, 9], up: 5, rules, seen: [2] });
+    expect([split.stand, split.hit, split.double]).toEqual([asSeen.stand, asSeen.hit, asSeen.double]);
+    expect(split.surrender).toBeNull();
+    // 3 hands of 8s: two other 8s are out, so this hand's 8,8 uses the last two 8s of a single deck.
+    expect(() => handEVs({ player: [8, 8], up: 6, rules, afterSplit: true, hands: 3, seen: [8] })).toThrow(/counting the split card in each of the other 2 hands/);
+    expect(() => handEVs({ player: [8, 8], up: 6, rules, afterSplit: true, hands: 4 })).toThrow(/5 8s requested/);
+  });
+
+  it("split aces stand: one card each, no double, no resplit, no surrender", () => {
+    for (const second of [1, 2, 5, 6, 9] as Rank[]) {
+      const e = handEVs({ player: [1, second], up: 6, rules: R("4-8", false, true, true), afterSplit: true, hands: 2 });
+      expect(e.best, `A,${second}`).toBe("stand");
+      expect([e.double, e.split, e.surrender]).toEqual([null, null, null]);
+      expect(Number.isFinite(e.hit)).toBe(true); // informational only
+    }
+    expect(() => handEVs({ player: [1, 5, 2], up: 6, rules: R("4-8"), afterSplit: true })).toThrow(/split aces/);
+    // An ace drawn to a split 8 is an ordinary hand: player[0] is the split card.
+    expect(handEVs({ player: [8, 1], up: 6, rules: R("4-8"), afterSplit: true }).best).not.toBe("hit");
   });
 });
 
@@ -157,5 +201,22 @@ describe("degenerate shoes", () => {
     // A nearly empty shoe still gives finite numbers.
     const e = handEVs({ player: [10, 2], up: 6, rules: R("1"), seen: [...allButTens.filter((r) => r > 6), 10, 10, 10, 10, 10, 10, 10, 10, 10, 10] });
     for (const v of [e.stand, e.hit, e.double]) expect(Number.isFinite(v)).toBe(true);
+    // Ten or ace up, and the player's draw can take the last unseen card (no hole card left for it).
+    const deck: Rank[] = [];
+    for (let r = 1; r <= 10; r++) for (let i = 0; i < (r === 10 ? 16 : 4); i++) deck.push(r as Rank);
+    const allBut = (keep: Rank[]) => {
+      const out = deck.slice();
+      for (const c of keep) out.splice(out.indexOf(c), 1);
+      return out;
+    };
+    const cases: Array<{ up: Rank; unseen: Rank[] }> = [
+      { up: 10, unseen: [10] }, // one unseen card
+      { up: 10, unseen: [9, 2] },
+      { up: 1, unseen: [9, 2] }
+    ];
+    for (const { up, unseen } of cases) {
+      const r = handEVs({ player: [10, 6], up, rules: R("1", false, true, true), seen: allBut([up, 10, 6, ...unseen]) });
+      for (const v of [r.stand, r.hit, r.double]) expect(Number.isFinite(v), `${up} up, unseen ${unseen}`).toBe(true);
+    }
   });
 });

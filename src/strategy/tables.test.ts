@@ -2,7 +2,7 @@
 //  (a) they equal the EV engine's derivation (derived.json), apart from documented deviations (none);
 //  (b) for 4-8 decks they reproduce the original Strategy Drill card;
 //  (c) they obey the basic facts of the game;
-//  (d) the resolved action is always legal;
+//  (d) after a split, the chart's play is legal and close to the engine's best play for the exact cards;
 //  (e) the engine confirms every resolved first-two-card play is the best legal play, including the
 //      off-card rows and the doubling-restriction fallbacks, and every close-calls.ts entry is accurate;
 //  (f) spot checks against published charts.
@@ -11,7 +11,7 @@ import derived from "./derived.json";
 import { CLOSE_CALLS, DEVIATIONS, matchesKey, type CloseCall } from "./close-calls";
 import { canDouble, canSurrender, codeChain, resolveCode, type Availability } from "./resolve";
 import { ROW_RANGE, chartSummary, strategyCode } from "./tables";
-import type { Action, Category, Code, Rank, Rules, Upcard } from "./types";
+import type { Action, Category, Code, DeckGroup, Rank, Rules, Upcard } from "./types";
 import { CODES, DECK_GROUPS, UPCARDS, upToRank } from "./types";
 import { allRuleCombos, cellEVs, comboKey, computeUpcard, decideCode, ROWS, type CellEVs, type UpcardData } from "../engine/derive";
 import { handEVs } from "../engine/index";
@@ -273,6 +273,8 @@ describe("(c) strategy tables obey the basic facts", () => {
           for (const up of UPCARDS) {
             const where = `${comboKey(rules)} ${idOf(cat, row, up)}`;
             const code = strategyCode(cat, row, up, rules);
+            // Holds by construction today (tables.ts derives the no-surrender table by this same strip);
+            // it guards against a future surrender-specific override.
             if (rules.surrender) expect(strip(code), where).toBe(strategyCode(cat, row, up, { ...rules, surrender: false }));
             if (code === "P" && !rules.das) expect(strategyCode(cat, row, up, { ...rules, das: true }), where).toBe("P");
             if (code === "P" && rules.double !== "any") expect(strategyCode(cat, row, up, { ...rules, double: "any" }), where).toBe("P");
@@ -283,7 +285,7 @@ describe("(c) strategy tables obey the basic facts", () => {
   });
 });
 
-describe("(d) the resolved action is always legal", () => {
+describe("(d) after a split, the chart's play is legal and close to the best play for the exact cards", () => {
   /** Advisor-style lookup: a splittable pair uses the pairs section (falling through to its total), everything else its total. */
   function play(cards: Rank[], up: Upcard, rules: Rules, afterSplit: boolean, hands: number): { action: Action; avail: Availability; code: Code } {
     const hard = cards.reduce((s, r) => s + r, 0);
@@ -306,37 +308,44 @@ describe("(d) the resolved action is always legal", () => {
     }
     throw new Error(`no action for ${cards} v ${up} under ${comboKey(rules)}`);
   }
-  const legal = (a: Action, avail: Availability) =>
-    (a !== "double" || avail.double) && (a !== "surrender" || avail.surrender) && (a !== "split" || avail.split);
 
-  it("for every two-card hand: first hand, and after a split with 2, 3 or 4 hands in play", () => {
+  // resolveCode can only return an available action, so legality is checked against the ENGINE's
+  // independent idea of what is allowed (its null fields), and the play against its EVs.
+  // Scope: every pair the chart splits, every second card, two hands in play, all 36 no-surrender
+  // rule sets (surrender is never allowed after a split, so LS plays are the same). The chart is
+  // total-dependent and built for fresh hands; after a split the other pair card is out too, so in
+  // 1-2 decks some exact hands play differently (1 deck H17: after splitting 8s, 8,4 v 3 should stand,
+  // by 0.036). The bounds are the measured worst cases, rounded up; a wrong chart cell or fallback
+  // would exceed them (for 4-8 decks, any cell off by more than 0.002).
+  const BOUND: Record<DeckGroup, number> = { "1": 0.04, "2": 0.015, "4-8": 0.002 };
+
+  it("for every hand dealt to a pair the chart splits", () => {
+    const worst: Record<string, [number, string]> = {};
     let n = 0;
-    for (const rules of COMBOS) {
+    // Rule sets innermost: the engine's context cache is keyed by shoe (decks, H17, upcard, cards out).
+    const groups = DECK_GROUPS.flatMap((decks) => [false, true].map((h17) => COMBOS.filter((r) => !r.surrender && r.decks === decks && r.h17 === h17)));
+    for (const group of groups) {
       for (const up of UPCARDS) {
-        for (let a = 1; a <= 10; a++) {
-          for (let b = a; b <= 10; b++) {
-            const cards = [a, b] as Rank[];
-            if (!(a === 1 && b === 10)) {
-              const r = play(cards, up, rules, false, 1);
-              expect(legal(r.action, r.avail), `${comboKey(rules)} ${cards} v ${up}: ${r.code} -> ${r.action}`).toBe(true);
-              n++;
-            }
-          }
-        }
-        // After a split: the first card is the split card (aces excluded: split aces get one card and stand).
         for (let x = 2; x <= 10; x++) {
-          for (let r2 = 1; r2 <= 10; r2++) {
-            for (const hands of [2, 3, 4]) {
-              const r = play([x, r2] as Rank[], up, rules, true, hands);
-              expect(legal(r.action, r.avail), `${comboKey(rules)} split ${x},${r2} v ${up} (${hands} hands): ${r.action}`).toBe(true);
-              expect(r.action).not.toBe("surrender");
+          for (const rules of group) {
+            if (strategyCode("pair", x, up, rules) !== "P") continue;
+            for (let r2 = 1; r2 <= 10; r2++) {
+              const cards = [x, r2] as Rank[];
+              const r = play(cards, up, rules, true, 2);
+              const ev = handEVs({ player: cards, up: upToRank(up), rules, afterSplit: true, hands: 2 });
+              const v = ev[r.action];
+              const where = `${comboKey(rules)} split ${x}s, ${cards} v ${up}: ${r.code} -> ${r.action}`;
+              expect(v, where + " is not allowed by the engine").not.toBeNull();
+              const loss = (ev[ev.best] as number) - (v as number);
+              if (!worst[rules.decks] || loss > worst[rules.decks][0]) worst[rules.decks] = [loss, `${where} loses ${loss.toFixed(4)} to ${ev.best}`];
               n++;
             }
           }
         }
       }
     }
-    expect(n).toBe(72 * 10 * (54 + 9 * 10 * 3));
+    expect(n).toBeGreaterThan(14000);
+    for (const g of DECK_GROUPS) expect(worst[g][0], worst[g][1]).toBeLessThan(BOUND[g]);
   });
 
   it("for every hand of three or more cards the play is hit or stand", () => {
@@ -401,6 +410,27 @@ describe("(e) the engine confirms every play", () => {
     }
     expect(n).toBe(72 * (17 + 9 + 10) * 10);
     expect(worse).toEqual([]);
+  });
+
+  it("CLOSE_CALLS lists every cell whose margin is under 0.003, and derived.json's close list agrees", () => {
+    const missing: string[] = [];
+    for (const rules of COMBOS) {
+      const key = comboKey(rules);
+      for (const cat of CATS) {
+        for (const row of engineRows[cat]) {
+          for (const up of UPCARDS) {
+            const id = idOf(cat, row, up);
+            const r = lead(rules, cat, row, strategyCode(cat, row, up, rules), evs(rules, cat, row, up));
+            if (r.margin < 0.003 && !findEntry(CLOSE_CALLS, key, id)) missing.push(`${key} ${id}: ${r.action} by ${r.margin.toFixed(5)} over ${r.runnerUp}`);
+          }
+        }
+      }
+    }
+    expect(missing).toEqual([]);
+    // derived.json's close list uses the same legal margins (rounded to 1e-5).
+    for (const e of derived.close) {
+      if (e.margin < 0.003) expect(findEntry(CLOSE_CALLS, e.key, e.cell), `${e.key} ${e.cell} (${e.margin})`).toBeDefined();
+    }
   });
 
   it("the off-card rows (hard 4, hard 20, soft 12) carry the engine's code", () => {

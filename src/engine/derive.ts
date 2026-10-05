@@ -18,7 +18,8 @@
 //    beating hs -> Dh/Ds. Else H/S.
 //  * Pairs under restricted doubling: when the pair itself can't be doubled (4,4 under 9-11 / 10-11)
 //    a Dx code would fall back to x, so if splitting beats hit/stand the cell is P (or Rp) instead.
-//    Without this, 1 deck S17 DAS 10-11 4,4 v 6 came out Dh (= hit) although split beats hit by 0.016.
+//    Without this, 1 deck S17 DAS 10-11 4,4 v 6 came out Dh (= hit) under the earlier split model,
+//    although split beats hit (by 0.019 with the current split values).
 //
 // Hit/stand/double EVs depend only on (decks, h17); split EVs on (decks, h17, das, double), so one
 // `UpcardData` serves every combination of the other rules.
@@ -130,6 +131,21 @@ export function cellEVs(data: UpcardData, cat: Category, row: number, rules: Rul
   return { stand: ws / wn, hit: wh / wn, double: wd / wn, split, surrender: rules.surrender ? -0.5 : null };
 }
 
+/**
+ * The cell's actions that are legal for a fresh two-card hand under `rules`, best first: doubling only
+ * where rules.double allows it for the two cards, surrender only with late surrender, split only for
+ * pairs. (cellEVs' `double` is as-if allowed; this drops it where it isn't.)
+ */
+export function legalRanking(ev: CellEVs, cat: Category, row: number, rules: Rules): Array<[Action, number]> {
+  const [a, b] = rowHands(cat, row)[0];
+  const shape = handShape([a, b]);
+  const out: Array<[Action, number]> = [["stand", ev.stand], ["hit", ev.hit]];
+  if (canDouble(shape.hard, shape.soft, 2, rules)) out.push(["double", ev.double]);
+  if (ev.split !== null) out.push(["split", ev.split]);
+  if (ev.surrender !== null) out.push(["surrender", ev.surrender]);
+  return out.sort((x, y) => y[1] - x[1]);
+}
+
 export interface CellDecision {
   code: Code;
   /** Relevant actions sorted best first, with EVs. */
@@ -189,6 +205,9 @@ export interface DerivedCombo {
 export interface CellReport {
   key: string;
   cell: string;
+  cat: Category;
+  row: number;
+  up: Upcard;
   rules: Rules;
   ev: CellEVs;
   decision: CellDecision;
@@ -216,7 +235,7 @@ export function deriveDecksH17(
           const ev = cellEVs(perUp[i], cat, row, rules);
           const decision = decideCode(ev, cat, row, rules);
           codes.push(decision.code);
-          onCell?.({ key, cell: cellId(cat, row, up), rules, ev, decision });
+          onCell?.({ key, cell: cellId(cat, row, up), cat, row, up, rules, ev, decision });
         });
         combo[cat][String(row)] = codes.join(" ");
       }

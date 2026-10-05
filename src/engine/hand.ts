@@ -67,8 +67,12 @@ export class HandContext {
     return this.memoV.size;
   }
 
-  /** P(no dealer blackjack | current working composition). */
+  /**
+   * P(no dealer blackjack | current working composition). With no card left there is no hole card,
+   * so the path can't happen: 0, the same way dealerMass drops paths that run out of cards.
+   */
   private noBJ(): number {
+    if (this.n === 0) return 0;
     if (this.up === 1) return 1 - this.c[9] / this.n;
     if (this.up === 10) return 1 - this.c[0] / this.n;
     return 1;

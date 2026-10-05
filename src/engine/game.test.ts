@@ -9,8 +9,8 @@
 //   Rule effects (Wizard of Odds rule-variation table, as quoted by e.g. lasvegasadvisor.com):
 //   H17 +0.22%, no DAS +0.14%, late surrender -0.08% (multi-deck), double 10-11 only ~+0.18%,
 //   double 9-11 only ~+0.09%.
-// Engine results at the time of writing: 0.4035%, 0.6160%, -0.0409%, 0.1800%;
-// effects H17 +0.2125, no DAS +0.1413, LS -0.0726, 10-11 +0.1919, 9-11 +0.0960.
+// Engine results at the time of writing: 0.4029%, 0.6154%, -0.0419%, 0.1785%;
+// effects H17 +0.2125, no DAS +0.1417, LS -0.0726, 10-11 +0.1920, 9-11 +0.0961.
 // The lower bounds below sit a little under the TD figures because composition-dependent play is
 // slightly better than total-dependent basic strategy.
 import { describe, expect, it } from "vitest";

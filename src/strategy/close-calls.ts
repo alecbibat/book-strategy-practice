@@ -7,13 +7,19 @@
 //
 // CLOSE_CALLS documents the cells worth knowing about, where tables.ts follows the engine: published
 // sources disagree, no published chart exists for the exact rules, the engine's margin is under 0.003
-// of a bet, or an earlier derivation got the cell wrong. tables.test.ts re-checks every entry: the
-// chosen code, the engine code and the margin.
+// of a bet, or an earlier derivation got the cell wrong. Every cell of every rule set whose margin is
+// under 0.003 is listed. tables.test.ts re-checks every entry (the chosen code, the engine code and the
+// margin) and that no thin cell is missing.
 //
 // `margin` is the engine's total-dependent EV of the chosen play minus that of the best other LEGAL
 // play for a fresh two-card hand, in units of the initial bet. Legal means doubling only where
 // rules.double allows it for that total, and surrender only with late surrender. A deviation would
-// have a negative margin.
+// have a negative margin. derived.json's `close` list uses the same legal margins.
+//
+// Split margins come from the engine's split model (split.ts), which matches Nairn's exact single-deck
+// split values to about 1e-5 (worst 3e-4) wherever Nairn's split-hand play is optimal. An earlier
+// model (each split hand valued with only the two original pair cards out) was off by up to 0.003;
+// the margins below are from the current model.
 
 import type { Action, Code } from "./types";
 
@@ -48,43 +54,46 @@ export const DEVIATIONS: CloseCall[] = [];
 export const CLOSE_CALLS: CloseCall[] = [
   // ---- Published sources disagree, or the result depends on the deck count inside "4-8" ----
   {
-    keys: "2|H17|DAS|LS|*", cell: "pair:8:11", chosen: "P", engine: "P", margin: 0.0042, runnerUp: "surrender",
-    sources: "blackjackinfo engine: P. gsdriver/blackjack-strategy (from the Wizard of Odds calculator): P. Wizard of Odds 2-deck chart: Rp.",
+    keys: "2|H17|DAS|LS|*", cell: "pair:8:11", chosen: "P", engine: "P", margin: 0.0061, runnerUp: "surrender",
+    sources:
+      "blackjackinfo engine: P. gsdriver/blackjack-strategy (from the Wizard of Odds calculator): P. Tom1581's bjcalc.py (one split, no resplit): split -0.49952 vs -0.5, the same as the engine's no-resplit value. Wizard of Odds 2-deck chart: Rp.",
     rationale:
-      "Sources disagree, so we follow the engine: split beats surrender by 0.0042. The Wizard's raw table has one code for DAS and no DAS. Without DAS, surrender is better (next entry), which probably explains its Rp."
+      "Sources disagree, so we follow the engine: split (-0.4939 with resplits) beats surrender by 0.0061. The Wizard's raw table has one code for DAS and no DAS. Without DAS, surrender is better (next entry), which probably explains its Rp."
   },
   {
-    keys: "2|H17|NDAS|LS|*", cell: "pair:8:11", chosen: "Rp", engine: "Rp", margin: 0.0023, runnerUp: "split",
-    sources: "Wizard of Odds: Rp. blackjackinfo engine: Rp.",
-    rationale: "Without DAS the split loses 0.0023 to surrender. All sources agree."
+    keys: "2|H17|NDAS|LS|*", cell: "pair:8:11", chosen: "Rp", engine: "Rp", margin: 0.0005, runnerUp: "split",
+    sources: "Wizard of Odds: Rp. blackjackinfo engine: Rp. Tom1581's bjcalc.py (no resplit): split -0.50529, the same as the engine's no-resplit value.",
+    rationale:
+      "Effectively a tie: without DAS, splitting with resplits (-0.50051) loses only 0.0005 to surrender (-0.5). Splitting without resplits would lose 0.0053. All sources agree on Rp."
   },
   {
-    keys: "4-8|S17|DAS|*|10-11", cell: "pair:4:5", chosen: "P", engine: "P", margin: 0.0019, runnerUp: "hit",
+    keys: "4-8|S17|DAS|*|10-11", cell: "pair:4:5", chosen: "P", engine: "P", margin: 0.0027, runnerUp: "hit",
     sources: "blackjackinfo engine, 6 decks and 8 decks (double 10-11, DAS): P.",
     rationale:
-      "\"4-8\" is modelled as 6 decks, where split leads by 0.0019. At 8 decks the engine has hit ahead by 0.0008, which is within its split-model error. blackjackinfo's 8-deck chart splits, so P stands for the whole 4-8 group. It is the only cell that differs between 4, 5, 6 and 8 decks."
+      "\"4-8\" is modelled as 6 decks, where split (+0.0863) leads hit (+0.0836) by 0.0027. At 8 decks the engine has hit ahead by 0.0006. blackjackinfo's 8-deck chart splits, so P stands for the whole 4-8 group. It is the only cell that differs between 4, 5, 6 and 8 decks."
   },
   {
-    keys: "1|H17|DAS|*|*", cell: "pair:9:11", chosen: "P", engine: "P", margin: 0.0002, runnerUp: "stand",
-    sources: "Wizard of Odds chart (Ps), Hoppe's computed 1-deck H17 table, Nairn's EVs (split by 0.0022): P. Hoppe notes that the Wizard's hand calculator says stand.",
-    rationale: "The thinnest split on any card. The published charts split, and so does the engine."
+    keys: "1|H17|DAS|*|*", cell: "pair:9:11", chosen: "P", engine: "P", margin: 0.0022, runnerUp: "stand",
+    sources: "Wizard of Odds chart (Ps), Hoppe's computed 1-deck H17 table, Nairn's exact EVs (split -0.18394 vs stand -0.18613): P. Hoppe notes that the Wizard's hand calculator says stand.",
+    rationale: "Split -0.18394 vs stand -0.18613, the same as Nairn's values. The published charts split, and so does the engine."
   },
 
   // ---- Rules with no published chart: split cells under restricted doubling (1 deck) ----
   {
-    keys: "1|S17|DAS|*|10-11", cell: "pair:4:4", chosen: "H", engine: "H", margin: 0.0013, runnerUp: "split",
-    sources: "No published chart. Nairn's 1-deck EVs (double 10-11 also after splits): hit +0.09786 vs split +0.09739, hit by 0.0005.",
+    keys: "1|S17|DAS|*|10-11", cell: "pair:4:4", chosen: "H", engine: "H", margin: 0.0005, runnerUp: "split",
+    sources:
+      "No published chart. Nairn's exact 1-deck EVs (double 10-11 also after splits): hit +0.09786 vs split +0.09739, hit by 0.0005. Dissent: gsdriver/blackjack-strategy says split, but its 4,4 split rule only checks doubleAfterSplit and ignores the 10-11 restriction on doubling after the split.",
     rationale:
-      "The only split cell that a doubling restriction changes in any rule set. Splitting 4s loses its 4+5 = 9 doubles, so P (double-any) becomes H. The engine's hit value equals Nairn's to five places."
+      "The only split cell that a doubling restriction changes in any rule set. Splitting 4s loses its 4+5 = 9 doubles, so P (double-any, split +0.1246) becomes H. The engine's hit and split values both equal Nairn's to five places, so Nairn settles it against gsdriver."
   },
   {
-    keys: "1|S17|DAS|*|10-11", cell: "pair:4:6", chosen: "P", engine: "P", margin: 0.0157, runnerUp: "hit",
-    sources: "No published chart. Nairn's 1-deck EVs: split.",
+    keys: "1|S17|DAS|*|10-11", cell: "pair:4:6", chosen: "P", engine: "P", margin: 0.0188, runnerUp: "hit",
+    sources: "No published chart. Nairn's exact 1-deck EVs: split +0.19413, hit +0.17529, double (as if allowed) +0.19318.",
     rationale:
-      "A derivation bug, now fixed. Doubling 4,4 (hard 8) as if allowed scores +0.193, which beats splitting (+0.191), so the cell came out Dh, which falls back to hit. Under 10-11 that double isn't allowed, and split beats hit by 0.0157. derive.ts now falls back to the split for pairs."
+      "Once a derivation bug. Doubling 4,4 (hard 8) as if allowed scores +0.19318. The earlier split model put the split at +0.191, below that double, so the cell came out Dh, which falls back to hit. Under 10-11 that double isn't allowed, and split (+0.19413, the same as Nairn's) beats hit by 0.0188. derive.ts now falls back to the split for a pair that can't be doubled; with the current split values the split also beats the as-if double, by 0.0010."
   },
 
-  // ---- Thin cells (< 0.003) where every published chart agrees with the engine ----
+  // ---- Thin cells (< 0.003; 6,6 v 2 was thin under the earlier split model) where every published chart agrees ----
   {
     keys: "1|S17|*|*|any", cell: "soft:8:6", chosen: "Ds", engine: "Ds", margin: 0.0003, runnerUp: "stand",
     sources: "Wizard of Odds, Hoppe, Nairn (by 0.0003), Phrack 1993, Hi-Opt I: Ds.", rationale: "A,8 v 6 in a single deck, S17."
@@ -138,11 +147,12 @@ export const CLOSE_CALLS: CloseCall[] = [
     sources: "Wizard of Odds, Hoppe: Rs.", rationale: "17 v A when the dealer hits soft 17, 1 deck."
   },
   {
-    keys: "2|S17|NDAS|*|*", cell: "pair:6:2", chosen: "P", engine: "P", margin: 0.0013, runnerUp: "hit",
-    sources: "Wizard of Odds, blackjackinfo engine: P.", rationale: "6,6 v 2 without DAS splits in 1-2 decks, hits in 4-8 decks."
+    keys: "2|S17|NDAS|*|*", cell: "pair:6:2", chosen: "P", engine: "P", margin: 0.0035, runnerUp: "hit",
+    sources: "Wizard of Odds, blackjackinfo engine: P.",
+    rationale: "6,6 v 2 without DAS splits in 1-2 decks, hits in 4-8 decks. The earlier split model put this at 0.0013."
   },
   {
-    keys: "2|*|DAS|*|*", cell: "pair:7:8", chosen: "P", engine: "P", margin: 0.0029, runnerUp: "hit",
+    keys: "2|*|DAS|*|*", cell: "pair:7:8", chosen: "P", engine: "P", margin: 0.0025, runnerUp: "hit",
     sources: "Wizard of Odds, blackjackinfo engine (including 9-11 and 10-11): P.", rationale: "7,7 v 8 with DAS, 1-2 decks."
   },
 
