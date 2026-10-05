@@ -4,15 +4,25 @@
   "version": "1.0.0",
   "description": "Blackjack basic strategy drill, strategy card, and hand advisor",
   "type": "module",
+  "engines": {
+    "node": "22.x"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "build:single": "vite build --mode single",
     "preview": "vite preview",
+    "start": "node server.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "derive": "tsx scripts/derive-strategy.ts"
+    "derive": "tsx scripts/derive-strategy.ts",
+    "heroku-postbuild": "vite build"
+  },
+  "dependencies": {
+    "@fontsource/barlow": "^5.3.0",
+    "@fontsource/barlow-condensed": "^5.3.0",
+    "@fontsource/bodoni-moda": "^5.3.0"
   },
   "devDependencies": {
     "@types/node": "^26.6.4",
@@ -21,10 +31,5 @@
     "vite": "^8.3.2",
     "vite-plugin-singlefile": "^2.3.3",
     "vitest": "^5.0.3"
-  },
-  "dependencies": {
-    "@fontsource/barlow": "^5.3.0",
-    "@fontsource/barlow-condensed": "^5.3.0",
-    "@fontsource/bodoni-moda": "^5.3.0"
   }
 }

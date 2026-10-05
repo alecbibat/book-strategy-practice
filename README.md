@@ -18,11 +18,24 @@ npm test             # unit tests (strategy tables, engine, advisor, explanation
 npm run typecheck
 npm run build        # static site in dist/ (relative paths, works from any folder)
 npm run build:single # everything inlined into dist-single/index.html
+npm start            # serve dist/ with the production server (PORT, default 3000)
 ```
 
-### Deploy
+### Deploy to Heroku
 
-`.github/workflows/pages.yml` builds and publishes `dist/` to GitHub Pages on every push to `main`. To turn it on, go to **Settings → Pages → Source** and choose **GitHub Actions**. `ci.yml` runs the typecheck, the tests and the build on every push and pull request.
+The repo is ready for Heroku's Node.js buildpack. You don't need any config vars.
+
+- **From GitHub**: in the Heroku dashboard, create an app, then go to **Deploy → GitHub**, connect this repository, and turn on **Automatic deploys** for `main`. Tick **Wait for CI to pass before deploy** so `ci.yml` (typecheck, tests, build) has to pass before Heroku deploys.
+- **From the CLI**: `heroku create`, then `git push heroku main`.
+
+On deploy, Heroku runs `npm install` and then `heroku-postbuild` (`vite build`). It then starts `web: node server.mjs` (see `Procfile`). `server.mjs` is a small server with no dependencies. It serves `dist/` on `$PORT` and:
+
+- caches hashed assets for a year and revalidates the page, the manifest and the service worker;
+- compresses text with brotli or gzip, and answers conditional requests with 304;
+- sends a strict Content-Security-Policy and other security headers;
+- redirects plain-HTTP visitors to HTTPS (using Heroku's `X-Forwarded-Proto` header), which offline support needs.
+
+To try the production server locally, run `npm run build && npm start` and open http://localhost:3000.
 
 ## How the strategy is checked
 
@@ -40,4 +53,5 @@ src/strategy/         rules types, chart tables, resolution, explanations, advis
 src/engine/           exact-odds engine (runs in a Web Worker in the app)
 scripts/              derive-strategy.ts: recompute every chart from the engine
 public/               icons, web manifest, service worker
+server.mjs            production server (Heroku: Procfile → web: node server.mjs)
 ```

@@ -1,0 +1,8 @@
+{
+  "name": "Strategy Drill",
+  "description": "Blackjack basic strategy drill, strategy card for your table's rules, and a hand advisor with exact odds.",
+  "repository": "https://github.com/alecbibat/book-strategy-practice",
+  "keywords": ["blackjack", "basic strategy", "vite", "typescript"],
+  "buildpacks": [{ "url": "heroku/nodejs" }],
+  "formation": { "web": { "quantity": 1 } }
+}
