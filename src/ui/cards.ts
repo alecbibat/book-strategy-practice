@@ -32,7 +32,7 @@ export function spoken(card: PlayingCard): string {
 /**
  * Card markup. `tag` lets the advisor render cards as buttons (tap to remove).
  */
-export function cardHTML(card: PlayingCard, i: number, opts: { tag?: "div" | "button"; attrs?: string; label?: string } = {}): string {
+export function cardHTML(card: PlayingCard, i: number, opts: { tag?: "div" | "button"; attrs?: string; label?: string; cls?: string } = {}): string {
   const tag = opts.tag ?? "div";
   const glyph = card.suit + TEXT_STYLE;
   const isFace = card.rank === "J" || card.rank === "Q" || card.rank === "K";
@@ -43,7 +43,7 @@ export function cardHTML(card: PlayingCard, i: number, opts: { tag?: "div" | "bu
     : '<span class="pip" aria-hidden="true">' + glyph + "</span>";
   const label = opts.label ?? spoken(card);
   const role = tag === "div" ? ' role="img"' : ' type="button"';
-  return "<" + tag + ' class="card' + (card.red ? " red" : "") + '" style="--i:' + i + '"' + role +
+  return "<" + tag + ' class="card' + (card.red ? " red" : "") + (opts.cls ? " " + opts.cls : "") + '" style="--i:' + i + '"' + role +
     ' aria-label="' + esc(label) + '"' + (opts.attrs ? " " + opts.attrs : "") + ">" +
     idx("tl") + center + idx("br") + "</" + tag + ">";
 }

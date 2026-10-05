@@ -44,6 +44,15 @@ describe("rowSummary (4-8 decks, S17, DAS, late surrender)", () => {
   });
 });
 
+describe("rowName", () => {
+  it("names the off-card soft rows", async () => {
+    const { rowName } = await import("../strategy/explain");
+    expect(rowName("soft", 1)).toBe("Soft 12 (A,A)");
+    expect(rowName("soft", 7)).toBe("Soft 18 (A,7)");
+    expect(rowName("soft", 10)).toBe("Soft 21");
+  });
+});
+
 describe("ruleNotes", () => {
   it("says what changes under other rules", () => {
     expect(ruleNotes("soft", 7, 2, R())).toContain("If the dealer hits soft 17, double.");

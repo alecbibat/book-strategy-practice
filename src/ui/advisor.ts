@@ -5,20 +5,25 @@ import { LABEL, upPhrase } from "../strategy/cells";
 import { cellTip, rowSummary } from "../strategy/explain";
 import type { Action, Rank } from "../strategy/types";
 import { engineDecks, RANKS, rankToUp } from "../strategy/types";
-import { cardHTML, makeCard, rankText, slotHTML, SUITS, type PlayingCard } from "./cards";
+import { cardHTML, makeCard, rankText, slotHTML, SUITS, TENS, type PlayingCard } from "./cards";
 import { $, esc } from "./dom";
 import { computeEVs } from "./ev-client";
-import { deckLabel, freshAdvisor, saved, save, type Target } from "./store";
+import { deckLabel, freshAdvisor, saved, save, type AdvisorState, type Target } from "./store";
 
 const MAX_PLAYER = 11;
 const MAX_SEEN = 40;
 
-let history: { target: Target; rank: Rank }[] = [];
+type HistoryEntry = { target: Target; rank: Rank; prev?: Rank | null };
+let history: HistoryEntry[] = [];
+/** The card just added, so only it animates onto the felt. */
+let entering: { zone: "dealer" | "player"; i: number } | null = null;
 let evTimer = 0;
 let evSeq = 0;
+let lastAnswer = "";
 let onShowCell: (id: string) => void = () => {};
 
 const A = () => saved.advisor;
+const afterSplit = () => A().hands > 1;
 
 /** How many cards of each value the shoe holds for the current rules. */
 const perRank = (r: Rank) => engineDecks(saved.rules.decks) * (r === 10 ? 16 : 4);
@@ -26,11 +31,6 @@ const perRank = (r: Rank) => engineDecks(saved.rules.decks) * (r === 10 ? 16 : 4
 function used(r: Rank): number {
   const a = A();
   return (a.up === r ? 1 : 0) + a.player.filter(x => x === r).length + a.seen.filter(x => x === r).length;
-}
-
-/** Stable display cards: suits cycle by position so the felt doesn't reshuffle on every tap. */
-function displayCard(r: Rank, i: number, offset: number): PlayingCard {
-  return makeCard(r === 1 ? 11 : r, SUITS[(i + offset) % 4], "10");
 }
 
 const name = (r: Rank) => (r === 1 ? "ace" : r === 10 ? "ten" : String(r));
@@ -54,26 +54,36 @@ export function addCard(r: Rank): void {
   const t = a.target;
   if (!canAdd(t, r)) return;
   if (t === "dealer") {
-    history = history.filter(h => h.target !== "dealer"); // a new upcard replaces the old one
+    history.push({ target: t, rank: r, prev: a.up });
     a.up = r;
+    entering = { zone: "dealer", i: 0 };
     if (a.player.length < 2) a.target = "player";
-  } else if (t === "player") a.player.push(r);
-  else a.seen.push(r);
-  history.push({ target: t, rank: r });
+  } else {
+    history.push({ target: t, rank: r });
+    if (t === "player") {
+      a.player.push(r);
+      entering = { zone: "player", i: a.player.length - 1 };
+    } else a.seen.push(r);
+  }
   changed();
 }
 
-function removeAt(target: Target, i: number): void {
+/** Remove a card: the dealer's upcard, the i-th player card, or one seen card of a rank. */
+function remove(zone: Target, key: number): void {
   const a = A();
-  let rank: Rank | null;
-  if (target === "dealer") { rank = a.up; a.up = null; }
-  else {
-    const list = target === "player" ? a.player : a.seen;
-    rank = list[i] ?? null;
+  if (zone === "dealer") {
+    a.up = null;
+    a.target = "dealer";
+    history = history.filter(h => h.target !== "dealer");
+  } else {
+    const list = zone === "player" ? a.player : a.seen;
+    const i = zone === "player" ? key : list.lastIndexOf(key as Rank);
+    if (i < 0) return;
+    const rank = list[i];
     list.splice(i, 1);
+    const j = history.map(h => h.target === zone && h.rank === rank).lastIndexOf(true);
+    if (j >= 0) history.splice(j, 1);
   }
-  const j = history.map(h => h.target === target && h.rank === rank).lastIndexOf(true);
-  if (j >= 0) history.splice(j, 1);
   changed();
 }
 
@@ -81,15 +91,20 @@ export function undo(): void {
   const a = A();
   const last = history.pop();
   if (last) {
-    if (last.target === "dealer") a.up = null;
-    else {
+    if (last.target === "dealer") {
+      a.up = last.prev ?? null;
+      if (!a.up) a.target = "dealer";
+    } else {
       const list = last.target === "player" ? a.player : a.seen;
       const i = list.lastIndexOf(last.rank);
       if (i >= 0) list.splice(i, 1);
     }
   } else if (a.seen.length) a.seen.pop();
   else if (a.player.length) a.player.pop();
-  else a.up = null;
+  else {
+    a.up = null;
+    a.target = "dealer";
+  }
   changed();
 }
 
@@ -102,6 +117,7 @@ export function clearAll(): void {
 export function loadHand(up: Rank, player: Rank[]): void {
   saved.advisor = { ...freshAdvisor(), up, player: [...player], target: "player" };
   history = [];
+  entering = null;
   changed();
 }
 
@@ -113,42 +129,85 @@ function changed(): void {
 // ---------- rendering ----------
 export function render(): void {
   const a = A();
+  const hadFocus = document.activeElement as HTMLElement | null;
   renderFelt();
-  // Target switch
+  entering = null;
   $("advTarget").querySelectorAll<HTMLButtonElement>("button[data-target]").forEach(b => {
     const on = b.dataset.target === a.target;
     b.setAttribute("aria-checked", String(on));
     b.tabIndex = on ? 0 : -1;
   });
-  // Keypad
+  let anyKey = false;
   $("keypad").querySelectorAll<HTMLButtonElement>("button[data-rank]").forEach(b => {
     const r = Number(b.dataset.rank) as Rank;
     b.disabled = !canAdd(a.target, r);
-    b.setAttribute("aria-pressed", String(a.target === "dealer" && a.up === r));
+    anyKey ||= !b.disabled;
+    // Keys are a choice only when picking the upcard; otherwise they just add a card.
+    if (a.target === "dealer") b.setAttribute("aria-pressed", String(a.up === r));
+    else b.removeAttribute("aria-pressed");
   });
   $("keypad").dataset.target = a.target;
-  $("keypadHint").textContent = a.target === "dealer" ? "Tap the dealer’s upcard." : a.target === "player" ? "Tap each of your cards in order." : "Cards you’ve seen leave the shoe. They only change the exact odds.";
-  ($("advUndo") as HTMLButtonElement).disabled = !a.up && !a.player.length && !a.seen.length;
-  ($("advClear") as HTMLButtonElement).disabled = !a.up && !a.player.length && !a.seen.length;
-  ($("advSplit") as HTMLInputElement).checked = a.afterSplit;
+  $("keypadHint").textContent = keypadHint(a, anyKey);
+  const empty = !a.up && !a.player.length && !a.seen.length;
+  ($("advUndo") as HTMLButtonElement).disabled = empty;
+  ($("advClear") as HTMLButtonElement).disabled = empty;
+  $("advHands").querySelectorAll<HTMLButtonElement>("button[data-v]").forEach(b => b.setAttribute("aria-pressed", String(Number(b.dataset.v) === a.hands)));
   renderAnswer();
+  // A key or button that just got disabled can't keep focus: hand it to something nearby.
+  if (hadFocus && (hadFocus as HTMLButtonElement).disabled && $("viewAdvisor").contains(hadFocus)) {
+    const to = $("keypad").querySelector<HTMLButtonElement>("button:not(:disabled)") ?? $("advTarget").querySelector<HTMLElement>('[aria-checked="true"]');
+    to?.focus({ preventScroll: true });
+  }
+}
+
+function keypadHint(a: AdvisorState, anyKey: boolean): string {
+  if (!anyKey) {
+    if (a.target === "player") return "Your hand is complete. Undo, or switch to Dealer or Other cards.";
+    if (a.target === "seen") return a.seen.length >= MAX_SEEN ? "That’s the limit of " + MAX_SEEN + " cards seen." : "Every card is accounted for.";
+  }
+  if (a.target === "dealer") return "Tap the dealer’s upcard.";
+  if (a.target === "player") return "Tap each of your cards in order.";
+  return "Cards you’ve seen leave the shoe. They only change the exact odds.";
+}
+
+/** Felt cards with suits that never repeat a physical card before the shoe allows it. */
+function feltCards(a: AdvisorState): { up: PlayingCard | null; player: PlayingCard[] } {
+  const count = new Map<Rank, number>();
+  const next = (r: Rank): PlayingCard => {
+    const k = count.get(r) ?? 0;
+    count.set(r, k + 1);
+    return makeCard(r === 1 ? 11 : r, SUITS[k % 4], TENS[Math.floor(k / 4) % 4]);
+  };
+  return { up: a.up ? next(a.up) : null, player: a.player.map(next) };
 }
 
 function renderFelt(): void {
   const a = A();
-  $("advDealer").innerHTML = a.up
-    ? cardHTML(displayCard(a.up, 0, 1), 0, { tag: "button", attrs: 'data-remove="dealer" data-i="0"', label: "Dealer upcard: " + name(a.up) + ". Tap to remove." })
+  const cards = feltCards(a);
+  $("advDealer").innerHTML = cards.up
+    ? cardHTML(cards.up, 0, {
+        tag: "button", attrs: 'data-remove="dealer" data-key="0"', label: "Dealer upcard: " + name(a.up!) + ". Remove",
+        cls: entering?.zone === "dealer" ? "enter" : ""
+      })
     : slotHTML("No dealer upcard yet", 0, 'data-slot="dealer"');
-  const playerCards = a.player.map((r, i) =>
-    cardHTML(displayCard(r, i, 0), i + 1, { tag: "button", attrs: 'data-remove="player" data-i="' + i + '"', label: "Your card: " + name(r) + ". Tap to remove." }));
-  for (let i = a.player.length; i < 2; i++) playerCards.push(slotHTML(i === 0 ? "Your first card" : "Your second card", i + 1, 'data-slot="player"'));
-  $("advPlayer").innerHTML = playerCards.join("");
-  $("advPlayer").classList.toggle("many", a.player.length > 4);
+  const playerCards = cards.player.map((c, i) =>
+    cardHTML(c, 0, {
+      tag: "button", attrs: 'data-remove="player" data-key="' + i + '"', label: "Your card " + (i + 1) + ": " + name(a.player[i]) + ". Remove",
+      cls: entering?.zone === "player" && entering.i === i ? "enter" : ""
+    }));
+  for (let i = a.player.length; i < 2; i++) playerCards.push(slotHTML(i === 0 ? "Your first card" : "Your second card", 0, 'data-slot="player"'));
+  const hand = $("advPlayer");
+  hand.innerHTML = playerCards.join("");
+  hand.classList.toggle("many", a.player.length > 4);
+  hand.style.setProperty("--n", String(Math.max(2, a.player.length)));
   const seen = $("advSeen");
   seen.hidden = !a.seen.length;
-  $("advSeenCards").innerHTML = a.seen.map((r, i) =>
-    '<button type="button" class="chip" data-remove="seen" data-i="' + i + '" aria-label="Remove ' + name(r) + ' from cards seen">' + rankText(r) + "</button>").join("");
-  $("advHandName").textContent = a.player.length ? describeHand(a.player, a.afterSplit) : "Your hand";
+  $("advSeenCards").innerHTML = RANKS.filter(r => a.seen.includes(r)).map(r => {
+    const n = a.seen.filter(x => x === r).length;
+    return '<button type="button" class="chip" data-remove="seen" data-key="' + r + '" aria-label="Remove one ' + name(r) + " (" + n + ' seen)">' +
+      rankText(r) + (n > 1 ? "<small>×" + n + "</small>" : "") + "</button>";
+  }).join("");
+  $("advHandName").textContent = a.player.length ? describeHand(a.player, afterSplit()) : "Your hand";
 }
 
 const VERB: Record<Action, string> = { hit: "hit", stand: "stand", double: "double", split: "split", surrender: "surrender" };
@@ -175,11 +234,11 @@ function answerHTML(adv: Advice): string {
       const tip = cellTip(adv.cat, adv.row, adv.up, adv.action);
       const summary = rowSummary(adv.cat, adv.row, saved.rules);
       let h = '<div class="ans-head"><span class="tag ans-tag t-' + adv.action + '">' + LABEL[adv.action] + "</span>" +
-        '<span class="ans-hand">' + esc(describeHand(a.player, a.afterSplit)) + " vs " + (adv.up === 11 ? "A" : adv.up) + "</span></div>";
+        '<span class="ans-hand">' + esc(describeHand(a.player, afterSplit())) + " vs " + (adv.up === 11 ? "A" : adv.up) + "</span></div>";
       if (fallback) h += '<p class="ans-fallback">' + esc(fallback) + "</p>";
       if (adv.notes.length) h += '<ul class="notes">' + adv.notes.map(n => "<li>" + esc(n) + "</li>").join("") + "</ul>";
       h += '<p class="ans-sub">' + esc(summary) + (tip ? " " + esc(tip) : "") + "</p>";
-      if (a.afterSplit && a.player.includes(1) && a.player.length === 2 && !adv.value.pair) {
+      if (afterSplit() && a.player.includes(1) && a.player.length === 2 && !adv.value.pair) {
         h += '<p class="ans-fine">If these are split aces, most casinos deal one card to each and you can’t act.</p>';
       }
       if (adv.chartCellId) h += '<div class="ans-foot"><button type="button" class="text-btn" data-show-cell="' + adv.chartCellId + '">See it on the strategy card</button></div>';
@@ -188,20 +247,27 @@ function answerHTML(adv: Advice): string {
   }
 }
 
+/** Only touch the live region when its content actually changes, so screen readers don't repeat it. */
+function setAnswer(className: string, html: string): void {
+  const box = $("advAnswer");
+  if (box.className !== className) box.className = className;
+  if (html !== lastAnswer) {
+    box.innerHTML = html;
+    lastAnswer = html;
+  }
+}
+
 function renderAnswer(): void {
   const a = A();
-  const box = $("advAnswer");
   const over = overLimit();
   if (over) {
-    box.className = "answer warn";
-    box.innerHTML = '<div class="ans-head"><span class="ans-title">Too many ' + name(over) + "s</span></div>" +
-      '<p class="ans-sub">A ' + deckLabel(saved.rules).toLowerCase() + " game only has " + perRank(over) + ". Remove some or change the deck count.</p>";
+    setAnswer("answer warn", '<div class="ans-head"><span class="ans-title">Too many ' + name(over) + "s</span></div>" +
+      '<p class="ans-sub">A ' + deckLabel(saved.rules).toLowerCase() + " game only has " + perRank(over) + ". Remove some or change the deck count.</p>");
     hideOdds();
     return;
   }
-  const adv = advise(a.player, a.up, saved.rules, { afterSplit: a.afterSplit });
-  box.className = "answer" + (adv.kind === "play" ? " play a-" + adv.action : "");
-  box.innerHTML = answerHTML(adv);
+  const adv = advise(a.player, a.up, saved.rules, { afterSplit: afterSplit(), hands: a.hands });
+  setAnswer("answer" + (adv.kind === "play" ? " play a-" + adv.action : ""), answerHTML(adv));
   if (adv.kind === "play") requestOdds(adv);
   else hideOdds();
 }
@@ -222,8 +288,9 @@ function requestOdds(adv: Extract<Advice, { kind: "play" }>): void {
   $("oddsBody").classList.add("stale");
   const id = ++evSeq;
   clearTimeout(evTimer);
+  const query = { player: [...a.player], up: a.up!, rules: { ...saved.rules }, seen: [...a.seen], afterSplit: afterSplit(), hands: a.hands };
   evTimer = window.setTimeout(() => {
-    computeEVs({ player: a.player, up: a.up!, rules: saved.rules, seen: a.seen, afterSplit: a.afterSplit, hands: a.afterSplit ? 2 : 1 })
+    computeEVs(query)
       .then(res => { if (id === evSeq) renderOdds(res, adv); })
       .catch(err => {
         if (id !== evSeq) return;
@@ -244,14 +311,14 @@ function renderOdds(res: EVResult, adv: Extract<Advice, { kind: "play" }>): void
   const scale = Math.max(1, ...rows.map(r => Math.abs(r.ev)));
   const body = $("oddsBody");
   body.innerHTML =
-    '<table class="odds"><thead><tr><th scope="col">Play</th><th scope="col">Expected result</th><th scope="col"><span class="sr">Comparison</span></th></tr></thead><tbody>' +
+    '<div class="odds-scroll"><table class="odds"><thead><tr><th scope="col">Play</th><th scope="col">Expected result</th><th scope="col" aria-hidden="true"></th></tr></thead><tbody>' +
     rows.map(r => {
       const marks = (r.act === adv.action ? '<span class="mark">Chart</span>' : "") + (r === best && best.act !== adv.action ? '<span class="mark best">Best</span>' : "");
       const w = Math.min(50, (Math.abs(r.ev) / scale) * 50);
       return '<tr' + (r.act === adv.action ? ' class="is-chart"' : "") + '><th scope="row"><span class="tag t-' + r.act + '">' + LABEL[r.act] + "</span>" + marks + "</th>" +
         '<td class="ev">' + fmtEV(r.ev) + "</td>" +
         '<td class="bar-cell" aria-hidden="true"><span class="bar ' + (r.ev >= 0 ? "pos" : "neg") + '" style="--w:' + w.toFixed(1) + '%"></span></td></tr>';
-    }).join("") + "</tbody></table>";
+    }).join("") + "</tbody></table></div>";
   let note = "";
   if (best && best.act !== adv.action) {
     const chart = rows.find(r => r.act === adv.action);
@@ -268,7 +335,7 @@ function renderOdds(res: EVResult, adv: Extract<Advice, { kind: "play" }>): void
 
 const engineDeckText = () => (saved.rules.decks === "1" ? "single deck" : saved.rules.decks === "2" ? "double deck" : "6-deck shoe");
 
-/** Keyboard: A, 2-9, 0/T for ten add a card; Backspace undoes. Returns true when the key was used. */
+/** Keyboard: A, 2-9, 0/T/J/Q/K for ten add a card; Backspace undoes. Returns true when the key was used. */
 export function advisorKey(e: KeyboardEvent): boolean {
   const k = (e.key || "").toLowerCase();
   const map: Record<string, Rank> = { a: 1, "1": 1, "0": 10, t: 10, j: 10, q: 10, k: 10 };
@@ -284,7 +351,7 @@ export function initAdvisor(opts: { showCell: (id: string) => void }): void {
   onShowCell = opts.showCell;
   $("keypad").innerHTML = RANKS.map(r =>
     '<button type="button" class="key" data-rank="' + r + '" aria-label="' + (r === 1 ? "Ace" : r === 10 ? "Ten, jack, queen or king" : String(r)) + '">' +
-    '<span class="key-main">' + rankText(r) + "</span>" + (r === 10 ? '<span class="key-sub">J Q K</span>' : "") + "</button>").join("");
+    '<span class="key-main" aria-hidden="true">' + rankText(r) + "</span>" + (r === 10 ? '<span class="key-sub" aria-hidden="true">J Q K</span>' : "") + "</button>").join("");
   $("keypad").addEventListener("click", e => {
     const b = (e.target as HTMLElement).closest<HTMLButtonElement>("button[data-rank]");
     if (b && !b.disabled) addCard(Number(b.dataset.rank) as Rank);
@@ -305,17 +372,34 @@ export function initAdvisor(opts: { showCell: (id: string) => void }): void {
     changed();
     $("advTarget").querySelector<HTMLButtonElement>('button[aria-checked="true"]')?.focus();
   });
-  const feltClick = (e: Event) => {
+  $("advFelt").addEventListener("click", e => {
     const t = e.target as HTMLElement;
     const rm = t.closest<HTMLElement>("[data-remove]");
-    if (rm) { removeAt(rm.dataset.remove as Target, Number(rm.dataset.i)); return; }
+    if (rm) {
+      const zone = rm.dataset.remove as Target;
+      const key = Number(rm.dataset.key);
+      const wasFocused = rm === document.activeElement;
+      remove(zone, key);
+      if (wasFocused) {
+        // Keep keyboard users in place: the next card in the same row, else the target switch.
+        const host = zone === "dealer" ? null : $(zone === "player" ? "advPlayer" : "advSeenCards");
+        const items = host ? host.querySelectorAll<HTMLElement>("[data-remove]") : null;
+        const nextEl = items && items.length ? items[Math.min(zone === "player" ? key : 0, items.length - 1)] : null;
+        (nextEl || $("advTarget").querySelector<HTMLElement>('[aria-checked="true"]'))?.focus({ preventScroll: true });
+      }
+      return;
+    }
     const slot = t.closest<HTMLElement>("[data-slot]");
     if (slot) { A().target = slot.dataset.slot as Target; changed(); }
-  };
-  $("advFelt").addEventListener("click", feltClick);
+  });
   $("advUndo").addEventListener("click", undo);
   $("advClear").addEventListener("click", clearAll);
-  $("advSplit").addEventListener("change", e => { A().afterSplit = (e.target as HTMLInputElement).checked; changed(); });
+  $("advHands").addEventListener("click", e => {
+    const b = (e.target as HTMLElement).closest<HTMLButtonElement>("button[data-v]");
+    if (!b) return;
+    A().hands = Number(b.dataset.v) as AdvisorState["hands"];
+    changed();
+  });
   $("advAnswer").addEventListener("click", e => {
     const b = (e.target as HTMLElement).closest<HTMLElement>("[data-show-cell]");
     if (b) onShowCell(b.dataset.showCell!);

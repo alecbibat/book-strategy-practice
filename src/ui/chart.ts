@@ -1,5 +1,5 @@
 // The strategy card: every square for the current rules, or the player's results on each square.
-import { CELL_BY_ID, cellPlay, cellTitle, LABEL, rowLabel, SECTIONS, SHORT } from "../strategy/cells";
+import { CELL_BY_ID, cellPlay, cellTitle, handName, LABEL, rowLabel, SECTIONS, SHORT } from "../strategy/cells";
 import { explainCell } from "../strategy/explain";
 import { chartSummary, strategyCode } from "../strategy/tables";
 import type { Rules } from "../strategy/types";
@@ -28,16 +28,32 @@ export function heat(id: string): "none" | "bad" | "mid" | "good" {
   return "good";
 }
 
-function legendHTML(rules: Rules, results: boolean): string {
+const HEAT_TEXT = { none: "not drilled", bad: "missed last time", mid: "recovering", good: "solid" } as const;
+
+function legendHTML(rules: Rules, results: boolean, hasDs: boolean): string {
   if (results) {
-    return '<span><i class="h-good">H</i>Solid</span><span><i class="h-mid">H</i>Recovering</span>' +
-      '<span><i class="h-bad">H</i>Missed last time</span><span><i class="h-none">H</i>Not drilled</span>';
+    return '<span><i class="h-good" aria-hidden="true">H</i>Solid</span><span><i class="h-mid" aria-hidden="true">H</i>Recovering</span>' +
+      '<span><i class="h-bad" aria-hidden="true">H</i>Missed last time</span><span><i class="h-none" aria-hidden="true">H</i>Not drilled</span>';
   }
-  let s = '<span><i class="a-hit">H</i>Hit</span><span><i class="a-stand">S</i>Stand</span>' +
-    '<span><i class="a-double">D</i>Double, else hit</span><span><i class="a-double">Ds</i>Double, else stand</span>' +
-    '<span><i class="a-split">P</i>Split</span>';
-  if (rules.surrender) s += '<span><i class="a-surrender">R</i>Surrender</span>';
+  let s = '<span><i class="a-hit" aria-hidden="true">H</i>Hit</span><span><i class="a-stand" aria-hidden="true">S</i>Stand</span>' +
+    '<span><i class="a-double" aria-hidden="true">D</i>Double, else hit</span>' +
+    (hasDs ? '<span><i class="a-double" aria-hidden="true">Ds</i>Double, else stand</span>' : "") +
+    '<span><i class="a-split" aria-hidden="true">P</i>Split</span>';
+  if (rules.surrender) s += '<span><i class="a-surrender" aria-hidden="true">R</i>Surrender</span>';
   return s;
+}
+
+/** What a screen reader hears for a square: "Hard 16 vs 10: surrender", "Soft 18 vs 4: double, else stand". */
+function squareLabel(rules: Rules, cat: "hard" | "soft" | "pair", row: number, up: (typeof UPCARDS)[number], results: boolean): string {
+  const id = cat + ":" + row + ":" + up;
+  const where = (cat === "soft" ? handName(cat, row) + " (A," + row + ")" : handName(cat, row)) + " vs " + (up === 11 ? "ace" : up);
+  if (results) {
+    const s = saved.cells[id];
+    return where + ": " + HEAT_TEXT[heat(id)] + (s ? ", " + s.c + " of " + s.n + " right" : "");
+  }
+  const { code, action } = cellPlay(cat, row, up, rules);
+  const play = action === "double" ? (code === "Ds" ? "double, else stand" : "double, else hit") : LABEL[action].toLowerCase();
+  return where + ": " + play;
 }
 
 /** Letters shown in a square. "Ds" keeps the double-else-stand distinction the classic card makes. */
@@ -60,7 +76,9 @@ function offChartNote(rules: Rules): string {
 export function renderChart(host: ChartHost): void {
   const rules = saved.rules;
   const results = chartState.view === "results";
-  let html = '<thead><tr><th class="row" scope="col"><span class="sr">Your hand</span></th>' +
+  let hasDs = false;
+  let html = '<caption class="sr">Basic strategy: your hand down the side, the dealer’s upcard across the top</caption>' +
+    '<thead><tr><th class="row" scope="col"><span class="sr">Your hand</span></th>' +
     UPCARDS.map(u => '<th scope="col">' + (u === 11 ? "A" : u) + "</th>").join("") + "</tr></thead>";
   for (const sec of SECTIONS) {
     html += '<tbody><tr class="sec"><th colspan="11" scope="rowgroup">' + sec.title + "</th></tr>";
@@ -69,10 +87,12 @@ export function renderChart(host: ChartHost): void {
       for (const u of UPCARDS) {
         const id = sec.cat + ":" + r + ":" + u;
         const c = cellText(rules, sec.cat, r, u);
+        if (c.text === "Ds") hasDs = true;
         let cls = results ? "h-" + heat(id) : c.cls;
-        if (id === chartState.selected) cls += " sel";
-        const label = cellTitle(CELL_BY_ID[id]) + ": " + LABEL[cellPlay(sec.cat, r, u, rules).action];
-        html += '<td class="' + cls + '" data-cell="' + id + '" tabindex="-1" aria-label="' + esc(label) + '">' + c.text + "</td>";
+        const sel = id === chartState.selected;
+        if (sel) cls += " sel";
+        html += '<td class="' + cls + '" data-cell="' + id + '" tabindex="-1"' + (sel ? ' aria-current="true"' : "") +
+          ' aria-label="' + esc(squareLabel(rules, sec.cat, r, u, results)) + '">' + c.text + "</td>";
       }
       html += "</tr>";
     }
@@ -80,7 +100,7 @@ export function renderChart(host: ChartHost): void {
   }
   host.table.innerHTML = html;
   host.table.classList.toggle("results", results);
-  host.legend.innerHTML = legendHTML(rules, results);
+  host.legend.innerHTML = legendHTML(rules, results, hasDs);
   host.foot.textContent = offChartNote(rules);
   host.summary.textContent = chartSummary(rules);
   host.viewSeg.querySelectorAll<HTMLButtonElement>("button[data-view]").forEach(b =>
@@ -111,6 +131,19 @@ export function renderDetail(host: ChartHost): void {
     '<button type="button" class="text-btn" data-drill="' + id + '">Drill this hand</button></span></div>';
 }
 
+/** Show `id` as the selected square and make it the table's one Tab stop. */
+export function markSelected(host: ChartHost, id: string): void {
+  host.table.querySelectorAll<HTMLElement>("td.sel").forEach(td => { td.classList.remove("sel"); td.removeAttribute("aria-current"); });
+  host.table.querySelectorAll<HTMLElement>('td[tabindex="0"]').forEach(td => { td.tabIndex = -1; });
+  const td = host.table.querySelector<HTMLElement>('td[data-cell="' + id + '"]');
+  if (td) {
+    td.classList.add("sel");
+    td.setAttribute("aria-current", "true");
+    td.tabIndex = 0;
+  }
+  chartState.selected = id;
+}
+
 /** Arrow-key movement between squares. */
 export function chartKeydown(host: ChartHost, e: KeyboardEvent, select: (id: string) => void): void {
   const td = (e.target as HTMLElement).closest<HTMLTableCellElement>("td[data-cell]");
@@ -124,13 +157,13 @@ export function chartKeydown(host: ChartHost, e: KeyboardEvent, select: (id: str
   else if (e.key === "ArrowLeft") target = col > 1 ? (tr.cells[col - 1] as HTMLElement) : null;
   else if (e.key === "ArrowDown") target = rows[ri + 1]?.cells[col] as HTMLElement | undefined ?? null;
   else if (e.key === "ArrowUp") target = rows[ri - 1]?.cells[col] as HTMLElement | undefined ?? null;
+  else if (e.key === "Home") target = tr.cells[1] as HTMLElement;
+  else if (e.key === "End") target = tr.cells[tr.cells.length - 1] as HTMLElement;
   else if (e.key === "Enter" || e.key === " ") { e.preventDefault(); select(td.dataset.cell!); return; }
   else return;
   e.preventDefault();
   if (target && target.dataset.cell) {
-    td.tabIndex = -1;
-    target.tabIndex = 0;
-    target.focus();
     select(target.dataset.cell);
+    target.focus();
   }
 }

@@ -68,11 +68,11 @@
       </svg>
       <div class="seat player">
         <div class="hand" id="playerHand"></div>
-        <span class="pill" id="handName" aria-live="polite"></span>
+        <span class="pill" id="handName"></span>
       </div>
     </section>
 
-    <div class="decide" id="decide" role="group" aria-label="Your play">
+    <div class="decide" id="decide" role="group" aria-label="Your play" aria-describedby="decideKeys">
       <button type="button" class="act" data-act="hit" aria-keyshortcuts="H">Hit <kbd aria-hidden="true">H</kbd></button>
       <button type="button" class="act" data-act="stand" aria-keyshortcuts="S">Stand <kbd aria-hidden="true">S</kbd></button>
       <button type="button" class="act" data-act="double" aria-keyshortcuts="D">Double <kbd aria-hidden="true">D</kbd></button>
@@ -80,7 +80,12 @@
       <button type="button" class="act wide" data-act="surrender" aria-keyshortcuts="R">Surrender <kbd aria-hidden="true">R</kbd></button>
     </div>
 
-    <div class="verdict" id="verdict" aria-live="polite"></div>
+    <p class="sr" id="decideKeys">Shortcuts: H hit, S stand, D double, P split, R surrender, N next hand.</p>
+
+    <div class="verdict" id="verdictBox" tabindex="-1">
+      <div class="v-text" id="verdict" aria-live="polite"></div>
+      <div class="v-actions" id="verdictActions"></div>
+    </div>
 
     <section class="panel" aria-labelledby="missTitle">
       <div class="panel-head"><h2 id="missTitle">Misses to review</h2><span class="meta" id="lifetime"></span></div>
@@ -91,7 +96,7 @@
 
   <!-- ===================== ADVISOR ===================== -->
   <section class="view" id="viewAdvisor" role="tabpanel" aria-labelledby="tabAdvisor" hidden>
-    <section class="felt advisor-felt" id="advFelt" aria-label="Cards you picked">
+    <section class="felt advisor-felt no-anim" id="advFelt" aria-label="Cards you picked">
       <div class="seat dealer">
         <span class="seat-label">Dealer</span>
         <div class="hand" id="advDealer"></div>
@@ -108,7 +113,7 @@
 
     <div class="adv-controls">
       <div class="target" id="advTarget" role="radiogroup" aria-label="Add cards to">
-        <button type="button" role="radio" data-target="dealer" aria-checked="true">Dealer upcard</button>
+        <button type="button" role="radio" data-target="dealer" aria-checked="true" aria-label="Dealer upcard">Dealer</button>
         <button type="button" role="radio" data-target="player" aria-checked="false" tabindex="-1">Your hand</button>
         <button type="button" role="radio" data-target="seen" aria-checked="false" tabindex="-1">Other cards</button>
       </div>
@@ -117,7 +122,15 @@
       <div class="adv-tools">
         <button type="button" class="tool-btn" id="advUndo" aria-keyshortcuts="Backspace">Undo</button>
         <button type="button" class="tool-btn" id="advClear">Clear</button>
-        <label class="switch"><input type="checkbox" id="advSplit"><span class="switch-ui" aria-hidden="true"></span><span>From a split</span></label>
+      </div>
+      <div class="hands-row">
+        <span class="hands-label" id="handsLabel">From a split?</span>
+        <div class="seg" id="advHands" role="group" aria-labelledby="handsLabel">
+          <button type="button" data-v="1" aria-pressed="true">No</button>
+          <button type="button" data-v="2" aria-pressed="false">2 hands</button>
+          <button type="button" data-v="3" aria-pressed="false">3 hands</button>
+          <button type="button" data-v="4" aria-pressed="false">4 hands</button>
+        </div>
       </div>
     </div>
 
@@ -146,7 +159,7 @@
       <button type="button" class="icon-btn" id="printBtn" aria-label="Print the strategy card">
         <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M4.5 6V2.5h7V6M4.5 11.5h-2v-5h11v5h-2M4.5 9.5h7v4h-7z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
       </button>
-      <button type="button" class="icon-btn" data-close aria-label="Close">
+      <button type="button" class="icon-btn" data-close aria-label="Close" autofocus>
         <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
       </button>
     </div>
@@ -163,7 +176,7 @@
     <div class="chart-wrap"><table class="strat" id="chart" aria-describedby="chartFoot"><caption class="sr">Basic strategy: your hand down the side, the dealer’s upcard across the top</caption></table></div>
     <p class="chart-foot" id="chartFoot"></p>
     <div class="legend" id="legend"></div>
-    <div class="detail" id="detail" aria-live="polite"></div>
+    <div class="detail" id="detail"></div>
   </div>
 </dialog>
 
@@ -172,7 +185,7 @@
   <div class="sheet-head">
     <div class="sheet-titles"><h2 id="rulesTitle">Table rules</h2><p class="meta">The drill, the advisor and the card all follow these.</p></div>
     <div class="sheet-actions">
-      <button type="button" class="icon-btn" data-close aria-label="Close">
+      <button type="button" class="icon-btn" data-close aria-label="Close" autofocus>
         <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
       </button>
     </div>
@@ -181,10 +194,14 @@
     <div class="rules-form" id="rulesForm"></div>
     <p class="fine">Assumes the dealer checks for blackjack, blackjack pays 3 to 2, you can split up to four hands, and split aces get one card each.</p>
     <button type="button" class="wide-btn" id="rulesToCard">View the strategy card</button>
-    <h3 class="sub-head">Drill</h3>
+    <h3 class="sub-head">Drill and keyboard</h3>
     <div class="set-row">
       <div><div class="set-name" id="autoName">After a right answer</div></div>
       <div class="seg" role="group" aria-labelledby="autoName" id="autoSeg"><button type="button" data-v="1">Deal next</button><button type="button" data-v="0">Wait for me</button></div>
+    </div>
+    <div class="set-row">
+      <div><div class="set-name" id="keysName">Keyboard shortcuts</div><div class="set-sub">H S D P R to answer, A–10 to add cards, C for the card</div></div>
+      <div class="seg" role="group" aria-labelledby="keysName" id="keysSeg"><button type="button" data-v="1">On</button><button type="button" data-v="0">Off</button></div>
     </div>
     <h3 class="sub-head">Appearance</h3>
     <div class="set-row">

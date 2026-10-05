@@ -16,7 +16,8 @@ export interface AdvisorState {
   up: Rank | null;
   player: Rank[];
   seen: Rank[];
-  afterSplit: boolean;
+  /** Hands in play from splitting: 1 = not split, 2-4 = this hand came from a split. */
+  hands: 1 | 2 | 3 | 4;
   target: Target;
 }
 
@@ -26,6 +27,8 @@ export interface Saved {
   mode: Mode;
   tab: Tab;
   theme: Theme;
+  /** Single-key shortcuts (H S D P R, A-10, C). Can be turned off for speech input and screen readers. */
+  shortcuts: boolean;
   cells: Record<string, CellStats>;
   advisor: AdvisorState;
   savedAt: number;
@@ -34,7 +37,7 @@ export interface Saved {
 const STORE_KEY = "bj-strategy-drill-v2";
 const LEGACY_KEY = "bj-strategy-drill-v1";
 
-export const freshAdvisor = (): AdvisorState => ({ up: null, player: [], seen: [], afterSplit: false, target: "dealer" });
+export const freshAdvisor = (): AdvisorState => ({ up: null, player: [], seen: [], hands: 1, target: "dealer" });
 
 export const saved: Saved = {
   rules: { ...DEFAULT_RULES },
@@ -42,6 +45,7 @@ export const saved: Saved = {
   mode: "all",
   tab: "drill",
   theme: "system",
+  shortcuts: true,
   cells: {},
   advisor: freshAdvisor(),
   savedAt: 0
@@ -83,7 +87,8 @@ function sanitizeAdvisor(raw: unknown): AdvisorState {
     up: RANKS.includes(a.up as Rank) ? (a.up as Rank) : null,
     player: rankList(a.player, 11),
     seen: rankList(a.seen, 40),
-    afterSplit: a.afterSplit === true,
+    // Older saves had a yes/no afterSplit flag.
+    hands: a.hands === 2 || a.hands === 3 || a.hands === 4 ? a.hands : a.afterSplit === true ? 2 : 1,
     target: a.target === "player" || a.target === "seen" ? a.target : "dealer"
   };
 }
@@ -95,6 +100,7 @@ export function adopt(data: unknown): void {
   if (MODES.includes(data.mode as Mode)) saved.mode = data.mode as Mode;
   if (data.tab === "drill" || data.tab === "advisor") saved.tab = data.tab;
   if (data.theme === "light" || data.theme === "dark" || data.theme === "system") saved.theme = data.theme;
+  if (typeof data.shortcuts === "boolean") saved.shortcuts = data.shortcuts;
   saved.cells = sanitizeCells(data.cells);
   if (data.advisor !== undefined) saved.advisor = sanitizeAdvisor(data.advisor);
   saved.savedAt = Number(data.savedAt) || 0;
@@ -128,6 +134,24 @@ export function save(): void {
   } catch {
     /* keep going without it */
   }
+}
+
+/**
+ * Another tab saved: take its data so this tab doesn't overwrite it with stale progress on its next save.
+ * Each tab keeps its own view (which tab is showing).
+ */
+export function watchOtherTabs(onChange: () => void): void {
+  window.addEventListener("storage", e => {
+    if (e.key !== STORE_KEY || !e.newValue) return;
+    const keepTab = saved.tab;
+    try {
+      adopt(JSON.parse(e.newValue));
+    } catch {
+      return;
+    }
+    saved.tab = keepTab;
+    onChange();
+  });
 }
 
 // ---- change notifications ----

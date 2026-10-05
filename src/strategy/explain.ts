@@ -63,7 +63,7 @@ export function rowSummary(cat: Category, row: number, rules: Rules): string {
 }
 
 export function rowName(cat: Category, row: number): string {
-  if (cat === "soft") return handName(cat, row) + " (A," + row + ")";
+  if (cat === "soft") return handName(cat, row) + (row === 1 ? " (A,A)" : row === 10 ? "" : " (A," + row + ")");
   return handName(cat, row);
 }
 

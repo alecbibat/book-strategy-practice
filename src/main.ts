@@ -13,11 +13,11 @@ import { CELL_BY_ID } from "./strategy/cells";
 import type { Rank } from "./strategy/types";
 import { upToRank } from "./strategy/types";
 import * as advisor from "./ui/advisor";
-import { chartKeydown, chartState, renderChart, renderDetail, type ChartHost, type ChartView } from "./ui/chart";
+import { chartKeydown, chartState, markSelected, renderChart, renderDetail, type ChartHost, type ChartView } from "./ui/chart";
 import { $, isTyping, reduceMotion } from "./ui/dom";
 import * as drill from "./ui/drill";
 import { mountRulesForm, syncRulesForms } from "./ui/rules-form";
-import { deckLabel, load, onRulesChange, rulesShort, save, saved, storageOK, type Tab, type Theme } from "./ui/store";
+import { deckLabel, load, onRulesChange, rulesShort, save, saved, storageOK, watchOtherTabs, type Tab, type Theme } from "./ui/store";
 
 load();
 
@@ -27,6 +27,10 @@ function applyTheme(): void {
   if (saved.theme === "system") root.removeAttribute("data-theme");
   else root.dataset.theme = saved.theme;
   $("themeSeg").querySelectorAll<HTMLButtonElement>("button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.v === saved.theme)));
+  document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]').forEach(m => {
+    m.dataset.orig ??= m.content;
+    m.content = saved.theme === "system" ? m.dataset.orig : saved.theme === "dark" ? "#0c120f" : "#226f49";
+  });
 }
 
 // ---------- tabs ----------
@@ -50,6 +54,8 @@ function showTab(tab: Tab, focus = false): void {
     drill.drill.timer = 0;
   } else if (drill.drill.answered && drill.drill.verdict?.ok && saved.auto) {
     drill.next(); // a right answer was waiting to move on
+  } else {
+    drill.restartClock();
   }
 }
 $("tabDrill").parentElement!.addEventListener("click", e => {
@@ -85,15 +91,27 @@ function openCard(selectId?: string): void {
   renderChart(chartHost);
   openDialog(cardDialog);
   const sel = chartState.selected && chartHost.table.querySelector<HTMLElement>('td[data-cell="' + chartState.selected + '"]');
-  if (sel) sel.scrollIntoView({ block: "center", inline: "center" });
+  if (sel) {
+    sel.scrollIntoView({ block: "center", inline: "center" });
+    if (selectId) sel.focus({ preventScroll: true });
+  }
 }
 for (const d of [cardDialog, rulesDialog]) {
+  const outside = (e: MouseEvent) => {
+    const r = d.getBoundingClientRect();
+    return e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom;
+  };
+  let pressedOutside = false;
+  d.addEventListener("pointerdown", e => { pressedOutside = e.target === d && outside(e); });
   d.addEventListener("click", e => {
     const t = e.target as HTMLElement;
-    if (t === d || t.closest("[data-close]")) d.close(); // backdrop or close button
+    if ((t === d && pressedOutside && outside(e)) || t.closest("[data-close]")) d.close();
   });
   d.addEventListener("close", () => {
-    if (saved.tab === "drill" && drill.drill.answered && saved.auto && drill.drill.verdict?.ok) drill.next();
+    if (cardDialog.open || rulesDialog.open) return; // swapped for the other sheet
+    if (saved.tab !== "drill") return;
+    if (drill.drill.answered && saved.auto && drill.drill.verdict?.ok) drill.next();
+    else drill.restartClock();
   });
 }
 $("cardBtn").addEventListener("click", () => openCard());
@@ -107,9 +125,7 @@ chartHost.viewSeg.addEventListener("click", e => {
   renderChart(chartHost);
 });
 function selectCell(id: string): void {
-  chartHost.table.querySelector("td.sel")?.classList.remove("sel");
-  chartHost.table.querySelector('td[data-cell="' + id + '"]')?.classList.add("sel");
-  chartState.selected = id;
+  markSelected(chartHost, id);
   renderDetail(chartHost);
 }
 chartHost.table.addEventListener("click", e => {
@@ -119,9 +135,19 @@ chartHost.table.addEventListener("click", e => {
 chartHost.table.addEventListener("keydown", e => chartKeydown(chartHost, e, selectCell));
 
 $("printBtn").addEventListener("click", () => {
+  if (!cardDialog.open) return;
   const root = document.documentElement;
+  const prevView = chartState.view;
+  if (prevView !== "plays") { chartState.view = "plays"; renderChart(chartHost); }
   root.classList.add("print-card");
-  const done = () => { root.classList.remove("print-card"); window.removeEventListener("afterprint", done); };
+  let finished = false;
+  const done = () => {
+    if (finished) return;
+    finished = true;
+    root.classList.remove("print-card");
+    window.removeEventListener("afterprint", done);
+    if (prevView !== "plays") { chartState.view = prevView; renderChart(chartHost); }
+  };
   window.addEventListener("afterprint", done);
   window.print();
   setTimeout(done, 1000);
@@ -187,6 +213,26 @@ $("autoSeg").addEventListener("click", e => {
   saved.auto = b.dataset.v === "1";
   save();
   renderAuto();
+  drill.refreshVerdict();
+});
+function renderShortcuts(): void {
+  $("keysSeg").querySelectorAll<HTMLButtonElement>("button").forEach(b => b.setAttribute("aria-pressed", String((b.dataset.v === "1") === saved.shortcuts)));
+  document.documentElement.classList.toggle("no-shortcuts", !saved.shortcuts);
+  document.querySelectorAll<HTMLElement>("[data-keys]").forEach(el => {
+    if (saved.shortcuts) el.setAttribute("aria-keyshortcuts", el.dataset.keys!);
+    else el.removeAttribute("aria-keyshortcuts");
+  });
+  if (saved.shortcuts) $("decide").setAttribute("aria-describedby", "decideKeys");
+  else $("decide").removeAttribute("aria-describedby");
+}
+document.querySelectorAll<HTMLElement>("[aria-keyshortcuts]").forEach(el => { el.dataset.keys = el.getAttribute("aria-keyshortcuts")!; });
+$("keysSeg").addEventListener("click", e => {
+  const b = (e.target as HTMLElement).closest<HTMLButtonElement>("button[data-v]");
+  if (!b) return;
+  saved.shortcuts = b.dataset.v === "1";
+  save();
+  renderShortcuts();
+  if (drill.drill.hand && !drill.drill.answered) drill.onRules();
 });
 $("themeSeg").addEventListener("click", e => {
   const b = (e.target as HTMLElement).closest<HTMLButtonElement>("button[data-v]");
@@ -219,7 +265,7 @@ resetBtn.addEventListener("click", () => {
 document.addEventListener("pointerdown", () => { drill.drill.keyboard = false; }, true);
 document.addEventListener("keydown", e => {
   if (e.metaKey || e.ctrlKey || e.altKey || e.repeat) return;
-  if (cardDialog.open || rulesDialog.open || isTyping(e.target)) return;
+  if (!saved.shortcuts || cardDialog.open || rulesDialog.open || isTyping(e.target)) return;
   const k = (e.key || "").toLowerCase();
   if (k === "c") { e.preventDefault(); openCard(); return; }
   if (saved.tab === "drill") drill.drillKey(e);
@@ -233,6 +279,7 @@ document.addEventListener("visibilitychange", () => {
 applyTheme();
 renderRules();
 renderAuto();
+renderShortcuts();
 $("syncNote").textContent = storageOK ? "Progress and settings are saved in this browser." : "Progress isn’t saved in this view.";
 drill.initDrill({
   openAdvisor: (up, player) => { advisor.loadHand(up, player); showTab("advisor"); },
@@ -240,6 +287,15 @@ drill.initDrill({
 });
 advisor.initAdvisor({ showCell: id => openCard(id) });
 showTab(saved.tab);
+watchOtherTabs(() => {
+  applyTheme();
+  renderRules();
+  renderAuto();
+  renderShortcuts();
+  drill.onRules();
+  advisor.onRules();
+  if (cardDialog.open) renderChart(chartHost);
+});
 
 if ("serviceWorker" in navigator && import.meta.env.PROD && import.meta.env.MODE !== "single" && location.protocol === "https:") {
   window.addEventListener("load", () => { navigator.serviceWorker.register("./sw.js").catch(() => { /* offline support is optional */ }); });

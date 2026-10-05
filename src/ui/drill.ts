@@ -37,7 +37,9 @@ export const drill = {
   force: null as string | null,
   timer: 0 as number,
   notice: "",
-  keyboard: false
+  keyboard: false,
+  /** Set while answer() is rendering a right answer that will auto-advance. */
+  autoPending: false
 };
 
 let onOpenAdvisor: (up: Rank, player: Rank[]) => void = () => {};
@@ -48,7 +50,8 @@ const el = {
   get tAcc() { return $("tAcc"); }, get tAccSub() { return $("tAccSub"); }, get tStreak() { return $("tStreak"); },
   get tBest() { return $("tBest"); }, get tSpeed() { return $("tSpeed"); }, get felt() { return $("felt"); },
   get dealer() { return $("dealerHand"); }, get player() { return $("playerHand"); }, get handName() { return $("handName"); },
-  get decide() { return $("decide"); }, get verdict() { return $("verdict"); }, get misses() { return $("misses"); },
+  get decide() { return $("decide"); }, get verdict() { return $("verdict"); }, get verdictBox() { return $("verdictBox"); },
+  get verdictActions() { return $("verdictActions"); }, get misses() { return $("misses"); },
   get lifetime() { return $("lifetime"); }, get byType() { return $("byType"); }
 };
 const btn = (a: Action) => el.decide.querySelector<HTMLButtonElement>('[data-act="' + a + '"]')!;
@@ -122,6 +125,8 @@ function pickCell(): Cell {
 export function deal(): void {
   clearTimeout(drill.timer);
   drill.timer = 0;
+  const active = document.activeElement;
+  const lostFocus = !!drill.hand && (active === document.body || el.verdictBox.contains(active) || el.decide.contains(active));
   const cell = pickCell();
   const { player, upcard } = dealCards(cell);
   drill.hand = { ...cell, id: idOf(cell), player, upcard, t0: now() };
@@ -130,6 +135,15 @@ export function deal(): void {
   renderHand();
   renderActions();
   renderIdle();
+  // The focused Next button (or a now-disabled play button) is gone: put focus back on the plays.
+  if (lostFocus && !$("viewDrill").hidden) {
+    el.decide.querySelector<HTMLButtonElement>(".act:not(:disabled):not([hidden])")?.focus({ preventScroll: true });
+  }
+}
+
+/** The answer clock only runs while the hand is on screen. */
+export function restartClock(): void {
+  if (drill.hand && !drill.answered) drill.hand.t0 = now();
 }
 
 export function answer(action: Action): void {
@@ -148,8 +162,15 @@ export function answer(action: Action): void {
   st.t = Date.now();
   if (ok) { st.c++; st.b = Math.min(4, st.b + 1); } else { st.m++; st.b = 0; }
   save();
+  const hadFocus = el.decide.contains(document.activeElement);
+  drill.autoPending = ok && saved.auto;
   renderActions();
   renderVerdict();
+  drill.autoPending = false;
+  if (hadFocus) {
+    const nb = document.getElementById("nextBtn");
+    (nb ?? el.verdictBox).focus({ preventScroll: true });
+  }
   renderTally();
   renderMisses();
   onChange();
@@ -198,31 +219,39 @@ export function renderActions(): void {
 
 function renderIdle(): void {
   const h = drill.hand!;
-  el.verdict.className = "verdict";
+  el.verdictBox.className = "verdict";
   const notice = drill.notice;
   drill.notice = "";
   el.verdict.innerHTML =
     '<div class="v-head"><span>What’s the play?</span></div>' +
-    '<p class="v-rule">' + esc(notice || handName(h.cat, h.row) + " against " + upPhrase(h.up) + ".") +
-    ' <span class="keys">Keys: H, S, D, P' + (saved.rules.surrender ? ", R" : "") + ".</span></p>";
+    '<p class="v-rule">' + esc(notice || handName(h.cat, h.row) + " against " + upPhrase(h.up) + ".") + "</p>";
+  el.verdictActions.innerHTML = saved.shortcuts
+    ? '<span class="keys v-rule" aria-hidden="true">Keys: H, S, D, P' + (saved.rules.surrender ? ", R" : "") + ".</span>"
+    : "";
 }
 
 function renderVerdict(): void {
   const h = drill.hand!, v = drill.verdict!;
   const ex = explainCell(h.cat, h.row, h.up, saved.rules);
-  el.verdict.className = "verdict " + (v.ok ? "good" : "bad");
+  el.verdictBox.className = "verdict " + (v.ok ? "good" : "bad");
   let html = '<div class="v-head"><span class="v-mark" aria-hidden="true">' + (v.ok ? "✓" : "✕") + "</span>" +
     "<span>" + (v.ok ? LABEL[v.correct] + " is right." : LABEL[v.correct] + " is the play.") + "</span>" +
     '<span class="v-time">' + v.secs.toFixed(1) + "s</span></div>";
   html += '<p class="v-rule">' + (v.ok ? "" : "You chose " + LABEL[v.chosen].toLowerCase() + ". ") + esc(ex.summary) +
     (ex.tip ? " " + esc(ex.tip) : "") +
     (ex.notes.length ? '<span class="v-extra">' + esc(ex.notes.join(" ")) + "</span>" : "") + "</p>";
-  const nextBtn = !v.ok || !saved.auto;
-  html += '<div class="v-actions">' + (nextBtn ? '<button type="button" class="v-next" id="nextBtn">Next hand</button>' : "") +
-    '<button type="button" class="text-btn" id="toAdvisor">Exact odds</button></div>';
-  if (!nextBtn) html += '<div class="v-bar" style="--dur:' + AUTO_MS + 'ms"></div>';
   el.verdict.innerHTML = html;
-  if (drill.keyboard && nextBtn) $("nextBtn").focus({ preventScroll: true });
+  const nextBtn = !v.ok || !saved.auto || !drill.timer && !drill.autoPending;
+  el.verdictActions.innerHTML = (nextBtn ? '<button type="button" class="v-next" id="nextBtn">Next hand</button>' : "") +
+    '<button type="button" class="text-btn" id="toAdvisor">Exact odds</button>' +
+    (nextBtn ? "" : '<div class="v-bar" style="--dur:' + AUTO_MS + 'ms"></div>');
+}
+
+/** Re-draw the verdict after a setting changed under it (e.g. auto-advance turned off). */
+export function refreshVerdict(): void {
+  if (!drill.answered || !drill.verdict) return;
+  if (!saved.auto) { clearTimeout(drill.timer); drill.timer = 0; }
+  renderVerdict();
 }
 
 function weakList() {
@@ -249,7 +278,7 @@ export function renderMisses(): void {
   if (shown.length) {
     el.misses.innerHTML = shown.map(x => {
       const a = correctAction(x.c, saved.rules);
-      const note = x.s.b === 0 ? "missed " + x.s.m + "×" : "1 more right to clear";
+      const note = x.s.b === 0 ? "missed " + x.s.m + "×" : "1 more to clear";
       return '<button type="button" class="miss" data-drill="' + x.id + '"><span class="miss-hand">' + esc(cellTitle(x.c)) +
         '</span><span class="tag t-' + a + '">' + LABEL[a] + '</span><span class="miss-note">' + note + "</span></button>";
     }).join("") + (list.length > shown.length ? '<p class="empty">+' + (list.length - shown.length) + " more in the Misses drill.</p>" : "");
@@ -301,6 +330,11 @@ const TEN_RANKS = new Set(["10", "J", "Q", "K"]);
 /** Keyboard handling while the drill is showing. Returns true when the key was used. */
 export function drillKey(e: KeyboardEvent): boolean {
   const k = (e.key || "").toLowerCase();
+  if (k === " " && !drill.answered) {
+    const t = e.target as HTMLElement | null;
+    if (!t || t === document.body || t === document.documentElement) { e.preventDefault(); return true; }
+    return false;
+  }
   if (!drill.answered && KEYS[k]) {
     if (available(KEYS[k])) { e.preventDefault(); drill.keyboard = true; answer(KEYS[k]); }
     return true;
@@ -322,7 +356,7 @@ export function initDrill(opts: { openAdvisor: (up: Rank, player: Rank[]) => voi
     const b = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-act]");
     if (b && !b.disabled) answer(b.dataset.act as Action);
   });
-  el.verdict.addEventListener("click", e => {
+  el.verdictBox.addEventListener("click", e => {
     const t = e.target as HTMLElement;
     if (t.closest("#toAdvisor")) {
       clearTimeout(drill.timer);
@@ -331,12 +365,18 @@ export function initDrill(opts: { openAdvisor: (up: Rank, player: Rank[]) => voi
       if (cur) onOpenAdvisor(cur.up, cur.player);
       return;
     }
-    // A right answer with auto-advance on has no Next button: tapping the verdict moves on.
-    if (t.closest("#nextBtn") || (drill.answered && drill.verdict?.ok && saved.auto)) next();
+    // A right answer that is auto-advancing has no Next button: tapping the verdict moves on.
+    if (t.closest("#nextBtn") || (drill.answered && drill.verdict?.ok && !document.getElementById("nextBtn"))) next();
   });
   el.modes.addEventListener("click", e => {
     const b = (e.target as HTMLElement).closest<HTMLButtonElement>("button[data-mode]");
     if (!b || !MODES.includes(b.dataset.mode as Mode)) return;
+    if (b.dataset.mode === "misses" && !CELLS.some(c => isWeak(idOf(c)))) {
+      drill.notice = "No misses to review yet. Hands you get wrong collect here.";
+      renderModes();
+      deal();
+      return;
+    }
     saved.mode = b.dataset.mode as Mode;
     save();
     renderModes();

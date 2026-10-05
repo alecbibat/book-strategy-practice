@@ -17,5 +17,7 @@ export const pick = <T>(a: readonly T[]): T => a[Math.floor(Math.random() * a.le
 /** True while the user is typing into a form field, so single-key shortcuts should stay out of the way. */
 export function isTyping(t: EventTarget | null): boolean {
   const el = t as HTMLElement | null;
-  return !!el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
+  if (!el) return false;
+  if (el.isContentEditable || el.tagName === "TEXTAREA" || el.tagName === "SELECT") return true;
+  return el.tagName === "INPUT" && !/^(checkbox|radio|button|submit|reset|range|color|file|image)$/i.test((el as HTMLInputElement).type);
 }
